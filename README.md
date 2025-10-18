@@ -21,3 +21,11 @@ AI-Powered Market Analysis & Price Forecasting
 • Ensemble Methods
 
 • Price predictions
+
+
+🚀 Getting Started
+Step 1: Select cryptocurrency pair from sidebar
+Step 2: Choose machine learning models
+Step 3: Adjust analysis parameters
+Step 4: Click "Run Full Analysis"
+
