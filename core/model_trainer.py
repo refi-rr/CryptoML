@@ -1,4 +1,5 @@
-# core/model_trainer.py
+# core/model_trainer.py - UPDATE dengan method train_models yang lengkap
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
@@ -83,7 +84,6 @@ class ModelTrainer:
     def build_bilstm_model(self, input_shape):
         """Bidirectional LSTM model untuk better context understanding"""
         model = Sequential([
-            # First BiLSTM layer
             Bidirectional(
                 LSTM(64, return_sequences=True, 
                      kernel_regularizer=l2(0.001),
@@ -93,7 +93,6 @@ class ModelTrainer:
             BatchNormalization(),
             Dropout(0.3),
             
-            # Second BiLSTM layer
             Bidirectional(
                 LSTM(32, return_sequences=False,
                      kernel_regularizer=l2(0.001))
@@ -101,7 +100,6 @@ class ModelTrainer:
             BatchNormalization(),
             Dropout(0.2),
             
-            # Dense layers
             Dense(64, activation='relu', kernel_regularizer=l2(0.001)),
             BatchNormalization(),
             Dropout(0.2),
@@ -111,7 +109,7 @@ class ModelTrainer:
         ])
         
         model.compile(
-            optimizer=Adam(learning_rate=0.0005),  # Lower LR untuk BiLSTM
+            optimizer=Adam(learning_rate=0.0005),
             loss='mse',
             metrics=['mae']
         )
@@ -120,7 +118,6 @@ class ModelTrainer:
     def build_cnn_bilstm_model(self, input_shape):
         """Hybrid CNN-BiLSTM untuk capture local + temporal patterns"""
         model = Sequential([
-            # CNN untuk local pattern detection
             Conv1D(filters=64, kernel_size=3, activation='relu', 
                    input_shape=input_shape),
             MaxPooling1D(pool_size=2),
@@ -128,13 +125,11 @@ class ModelTrainer:
             BatchNormalization(),
             Dropout(0.3),
             
-            # BiLSTM untuk bidirectional temporal dependencies
             Bidirectional(LSTM(64, return_sequences=True)),
             Dropout(0.3),
             Bidirectional(LSTM(32, return_sequences=False)),
             Dropout(0.2),
             
-            # Output layers
             Dense(64, activation='relu'),
             BatchNormalization(),
             Dropout(0.1),
@@ -166,9 +161,13 @@ class ModelTrainer:
         
         model.compile(optimizer='adam', loss='mse', metrics=['mae'])
         return model
-    
+
+    # ✅ TAMBAHKAN METHOD train_models YANG LENGKAP
     def train_models(self, X_train, y_train, X_test, y_test, feature_names, selected_models):
         """Enhanced model training dengan early stopping dan volatility adaptation"""
+        # Reset histories
+        self.histories = {}
+        
         # Calculate data volatility untuk adaptive training
         if len(y_train) > 0:
             price_volatility = np.std(y_train) / np.mean(y_train)
@@ -178,11 +177,11 @@ class ModelTrainer:
         
         # Adaptive parameters berdasarkan volatility
         if high_volatility:
-            print("ðŸ”´ High volatility regime detected - Using conservative training")
+            print("🔄 High volatility regime detected - Using conservative training")
             epochs = 100
             patience = 20
         else:
-            print("ðŸŸ¢ Normal volatility regime - Using standard training")  
+            print("🔵 Normal volatility regime - Using standard training")  
             epochs = 80
             patience = 15
         
@@ -276,11 +275,18 @@ class ModelTrainer:
                     svr_model.fit(X_train_flat, y_train[:, 0])
                     self.models['svr'] = svr_model
                     
+            print(f"✅ Training completed. {len(self.models)} models trained.")
+            print(f"✅ Models: {list(self.models.keys())}")
+            print(f"✅ Histories: {list(self.histories.keys())}")
+                    
         except Exception as e:
             print(f"Error in model training: {e}")
+            import traceback
+            traceback.print_exc()
         
         return self.models
-    
+
+    # ✅ TAMBAHKAN METHOD evaluate_models
     def evaluate_models(self, X_test, y_test):
         """Enhanced model evaluation dengan comprehensive metrics"""
         metrics = {}
@@ -330,6 +336,8 @@ class ModelTrainer:
                     'training_info': training_info
                 }
                 
+                print(f"✅ {name} evaluation completed")
+                
             except Exception as e:
                 print(f"Error evaluating {name}: {e}")
                 metrics[name] = {
@@ -339,24 +347,36 @@ class ModelTrainer:
                 }
         
         return metrics
-    
+
+    # ✅ TAMBAHKAN METHOD plot_training_history
     def plot_training_history(self, model_name):
         """Plot training history untuk model diagnostics"""
         if model_name in self.histories:
             history = self.histories[model_name]
             
-            import plotly.graph_objects as go
+            try:
+                import plotly.graph_objects as go
+            except ImportError:
+                print("Plotly not available for training history plots")
+                return None
+            
             fig = go.Figure()
+            
+            # Plot loss
             fig.add_trace(go.Scatter(
                 y=history.history['loss'],
                 name='Training Loss',
                 line=dict(color='blue', width=2)
             ))
-            fig.add_trace(go.Scatter(
-                y=history.history['val_loss'],
-                name='Validation Loss',
-                line=dict(color='red', width=2)
-            ))
+            
+            # Plot validation loss jika ada
+            if 'val_loss' in history.history:
+                fig.add_trace(go.Scatter(
+                    y=history.history['val_loss'],
+                    name='Validation Loss',
+                    line=dict(color='red', width=2)
+                ))
+            
             fig.update_layout(
                 title=f'{model_name.upper()} Training History',
                 xaxis_title='Epochs',
@@ -364,59 +384,60 @@ class ModelTrainer:
                 template='plotly_white',
                 height=400
             )
+            
             return fig
         return None
 
-    # Tambahkan di class ModelTrainer (core/model_trainer.py)
-
-def predict_future_prices(self, data_with_features, feature_names, forecast_days):
-    """Make actual predictions using trained models"""
-    predictions = {}
-    
-    try:
-        # Prepare the last sequence for prediction
-        features = data_with_features[feature_names].values
+    # ✅ TAMBAHKAN METHOD predict_future_prices
+    def predict_future_prices(self, data_with_features, feature_names, forecast_days):
+        """Make actual predictions using trained models"""
+        predictions = {}
         
-        # Ensure we have enough data for lookback
-        if len(features) < self.lookback_days:
-            raise ValueError(f"Not enough data for prediction. Need {self.lookback_days} days, got {len(features)}")
-        
-        last_sequence = features[-self.lookback_days:]  # Last lookback_days data points
-        last_sequence = last_sequence.reshape(1, self.lookback_days, len(feature_names))
-        
-        for model_name, model in self.models.items():
-            try:
-                if model_name in ['lstm', 'bilstm', 'cnn_lstm', 'cnn_bilstm']:
-                    # Deep learning models
-                    y_pred = model.predict(last_sequence, verbose=0)[0]
-                else:
-                    # Traditional ML models
-                    X_flat = last_sequence.reshape(1, -1)
-                    y_pred_single = model.predict(X_flat)[0]
-                    # Create forecast for all days (repeat for simplicity)
-                    y_pred = np.full(forecast_days, y_pred_single)
-                
-                # Ensure we only return the requested forecast days
-                y_pred = y_pred[:forecast_days]
-                
-                # Convert to proper display format
-                predictions[model_name] = y_pred
-                
-                print(f"✅ {model_name} prediction generated: {y_pred[:3]}...")  # Debug info
-                
-            except Exception as e:
-                print(f"❌ Error predicting with {model_name}: {e}")
-                # Fallback to simple prediction based on last price
-                last_price = data_with_features['close'].iloc[-1]
+        try:
+            # Prepare the last sequence for prediction
+            features = data_with_features[feature_names].values
+            current_price = data_with_features['close'].iloc[-1]
+            
+            # Ensure we have enough data for lookback
+            if len(features) < self.lookback_days:
+                raise ValueError(f"Not enough data for prediction. Need {self.lookback_days} days, got {len(features)}")
+            
+            last_sequence = features[-self.lookback_days:]
+            last_sequence = last_sequence.reshape(1, self.lookback_days, len(feature_names))
+            
+            for model_name, model in self.models.items():
+                try:
+                    if model_name in ['lstm', 'bilstm', 'cnn_lstm', 'cnn_bilstm']:
+                        # Deep learning models
+                        y_pred = model.predict(last_sequence, verbose=0)[0]
+                    else:
+                        # Traditional ML models
+                        X_flat = last_sequence.reshape(1, -1)
+                        y_pred_single = model.predict(X_flat)[0]
+                        # Create forecast for all days (repeat for simplicity)
+                        y_pred = np.full(forecast_days, y_pred_single)
+                    
+                    # Ensure we only return the requested forecast days
+                    y_pred = y_pred[:forecast_days]
+                    
+                    # Convert to proper display format
+                    predictions[model_name] = y_pred
+                    
+                    print(f"✅ {model_name} prediction generated: {y_pred[:3]}...")
+                    
+                except Exception as e:
+                    print(f"❌ Error predicting with {model_name}: {e}")
+                    # Fallback to simple prediction based on last price
+                    last_price = data_with_features['close'].iloc[-1]
+                    predictions[model_name] = np.full(forecast_days, last_price)
+            
+            print(f"✅ Successfully generated predictions for {len(predictions)} models")
+            
+        except Exception as e:
+            print(f"❌ Error in predict_future_prices: {e}")
+            # Fallback for all models
+            last_price = data_with_features['close'].iloc[-1]
+            for model_name in self.models.keys():
                 predictions[model_name] = np.full(forecast_days, last_price)
         
-        print(f"✅ Successfully generated predictions for {len(predictions)} models")
-        
-    except Exception as e:
-        print(f"❌ Error in predict_future_prices: {e}")
-        # Fallback for all models
-        last_price = data_with_features['close'].iloc[-1]
-        for model_name in self.models.keys():
-            predictions[model_name] = np.full(forecast_days, last_price)
-    
-    return predictions
+        return predictions
