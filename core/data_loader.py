@@ -106,3 +106,28 @@ class CryptoDataLoader:
                 data_dict[symbol] = data
             time.sleep(1.2)  # Rate limiting
         return data_dict
+    
+    # ENHANCEMENT: Tambahkan method untuk data quality check
+    def validate_data_quality(self, df):
+        """Validate data quality sebelum digunakan"""
+        if df is None or len(df) == 0:
+            return False
+        
+        # Check for missing values
+        missing_ratio = df.isnull().sum().sum() / (len(df) * len(df.columns))
+        if missing_ratio > 0.1:  # More than 10% missing
+            print(f"⚠️ High missing data ratio: {missing_ratio:.2%}")
+            return False
+        
+        # Check for zero or negative prices
+        if (df['close'] <= 0).any():
+            print("⚠️ Invalid price data detected")
+            return False
+        
+        # Check for sufficient data points
+        if len(df) < 100:
+            print("⚠️ Insufficient data points")
+            return False
+        
+        print("✅ Data quality check passed")
+        return True
