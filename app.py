@@ -137,51 +137,102 @@ except ImportError as e:
 # Tambahkan di app.py (sebelum helper functions)
 
 def predict_with_models(model_trainer, data_with_features, feature_names, forecast_days):
-    """External prediction function jika tidak bisa modify model_trainer.py"""
+    """External prediction function dengan enhanced debugging"""
     predictions = {}
     
+    st.write("🔍 DEBUG: predict_with_models started")
+    
     try:
+        # Validasi input
+        if model_trainer is None:
+            st.error("❌ model_trainer is None in predict_with_models")
+            return {}
+            
+        if data_with_features is None:
+            st.error("❌ data_with_features is None in predict_with_models")
+            return {}
+            
+        # Get current price
+        current_price = data_with_features['close'].iloc[-1]
+        st.write(f"🔍 DEBUG: Current price: ${current_price:.2f}")
+        
         # Prepare the last sequence for prediction
         features = data_with_features[feature_names].values
+        st.write(f"🔍 DEBUG: Features shape: {features.shape}")
         
         # Ensure we have enough data for lookback
         lookback_days = model_trainer.lookback_days
-        if len(features) < lookback_days:
-            raise ValueError(f"Not enough data for prediction. Need {lookback_days} days, got {len(features)}")
+        st.write(f"🔍 DEBUG: Lookback days: {lookback_days}")
+        st.write(f"🔍 DEBUG: Available data: {len(features)} days")
         
-        last_sequence = features[-lookback_days:]  # Last lookback_days data points
+        if len(features) < lookback_days:
+            error_msg = f"Not enough data for prediction. Need {lookback_days} days, got {len(features)}"
+            st.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
+        
+        last_sequence = features[-lookback_days:]
         last_sequence = last_sequence.reshape(1, lookback_days, len(feature_names))
+        st.write(f"🔍 DEBUG: Last sequence shape: {last_sequence.shape}")
+        
+        # Check available models
+        available_models = list(model_trainer.models.keys())
+        st.write(f"🔍 DEBUG: Available models: {available_models}")
+        
+        if not available_models:
+            st.error("❌ No models available for prediction")
+            return {}
         
         for model_name, model in model_trainer.models.items():
             try:
+                st.write(f"🔍 DEBUG: Predicting with {model_name}...")
+                
                 if model_name in ['lstm', 'bilstm', 'cnn_lstm', 'cnn_bilstm']:
                     # Deep learning models
                     y_pred = model.predict(last_sequence, verbose=0)[0]
+                    st.write(f"🔍 DEBUG: {model_name} DL prediction: {y_pred[:3]}...")
                 else:
                     # Traditional ML models
                     X_flat = last_sequence.reshape(1, -1)
                     y_pred_single = model.predict(X_flat)[0]
                     # Create forecast for all days
                     y_pred = np.full(forecast_days, y_pred_single)
+                    st.write(f"🔍 DEBUG: {model_name} ML prediction: {y_pred_single:.2f}")
                 
                 # Ensure we only return the requested forecast days
                 y_pred = y_pred[:forecast_days]
-                predictions[model_name] = y_pred
                 
-                st.write(f"✅ {model_name} prediction: {y_pred[:3]}...")  # Debug info
+                # Validasi prediksi
+                if (y_pred is not None and 
+                    len(y_pred) == forecast_days and 
+                    not np.isnan(y_pred).any() and
+                    np.min(y_pred) > 0):
+                    
+                    predictions[model_name] = y_pred
+                    st.write(f"✅ {model_name}: Prediction successful")
+                else:
+                    st.warning(f"⚠️ {model_name}: Invalid prediction, using fallback")
+                    predictions[model_name] = [current_price] * forecast_days
                 
             except Exception as e:
-                st.write(f"❌ Error predicting with {model_name}: {e}")
-                # Fallback
-                last_price = data_with_features['close'].iloc[-1]
-                predictions[model_name] = np.full(forecast_days, last_price)
+                st.error(f"❌ Error predicting with {model_name}: {e}")
+                predictions[model_name] = [current_price] * forecast_days
+        
+        st.write(f"✅ Successfully generated predictions for {len(predictions)} models")
         
     except Exception as e:
-        st.error(f"❌ Prediction error: {e}")
+        st.error(f"❌ Error in predict_with_models: {e}")
+        import traceback
+        st.write("Stack trace:")
+        st.code(traceback.format_exc())
+        
         # Fallback for all models
-        last_price = data_with_features['close'].iloc[-1]
+        try:
+            current_price = data_with_features['close'].iloc[-1]
+        except:
+            current_price = 1000
+            
         for model_name in model_trainer.models.keys():
-            predictions[model_name] = np.full(forecast_days, last_price)
+            predictions[model_name] = [current_price] * forecast_days
     
     return predictions
 
@@ -202,23 +253,144 @@ def plot_indicator(data, indicator):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+def show_model_performance(metrics):
+    """Show realistic model performance"""
+    st.subheader("🏆 Realistic Model Ranking")
+    
+    if not metrics:
+        st.warning("No model metrics available")
+        return
+    
+    performance_data = []
+    for model_name, model_data in metrics.items():
+        day1 = model_data.get('day_metrics', {}).get('day_1', {})
+        is_realistic = model_data.get('realistic', False)
+        overall_score = model_data.get('overall_score', 0)
+        
+        performance_data.append({
+            'Model': model_name.upper(),
+            'Realistic': '✅' if is_realistic else '❌',
+            'Profit_Score': f"{overall_score:.1f}%",
+            'Direction_Acc': f"{day1.get('direction_accuracy', 0)*100:.1f}%",
+            'R²_Score': f"{day1.get('r2', 0):.3f}",
+            'MAE': f"${day1.get('mae', 0):.2f}"
+        })
+    
+    # Sort by profit score
+    performance_df = pd.DataFrame(performance_data)
+    if not performance_df.empty:
+        performance_df = performance_df.sort_values('Profit_Score', ascending=False)
+        st.dataframe(performance_df, use_container_width=True)
+        
+        # Show best realistic model
+        realistic_models = performance_df[performance_df['Realistic'] == '✅']
+        if not realistic_models.empty:
+            best_model = realistic_models.iloc[0]
+            st.success(f"🎯 **Recommended Model**: {best_model['Model']} (Profit Score: {best_model['Profit_Score']})")
+        else:
+            st.error("⚠️ No realistic models found! Predictions may be unreliable.")
 # GANTI function show_predictions di app.py
 
+# app.py - UPDATE function show_predictions
+
+# app.py - UPDATE function show_predictions dengan detailed debugging
+
 def show_predictions(data, data_with_features, feature_names, forecast_days, model_trainer):
-    """Show REAL predictions using trained models"""
+    """Show REAL predictions dengan detailed debugging"""
+    
+    st.write("🔍 DEBUG: show_predictions function started")
     
     try:
-        # Generate actual predictions - GUNAKAN FUNCTION YANG BARU
+        # ✅ Validasi input parameters
+        if data is None:
+            st.error("❌ Data is None")
+            return
+        if data_with_features is None:
+            st.error("❌ data_with_features is None") 
+            return
+        if feature_names is None or len(feature_names) == 0:
+            st.error("❌ feature_names is empty")
+            return
+        if model_trainer is None:
+            st.error("❌ model_trainer is None")
+            return
+            
+        st.write(f"🔍 DEBUG: Input validation passed")
+        st.write(f"🔍 DEBUG: Data shape: {data.shape}")
+        st.write(f"🔍 DEBUG: Features shape: {data_with_features.shape}")
+        st.write(f"🔍 DEBUG: Feature names count: {len(feature_names)}")
+        st.write(f"🔍 DEBUG: Forecast days: {forecast_days}")
+        st.write(f"🔍 DEBUG: Model trainer: {type(model_trainer)}")
+        
+        # Get current price
+        current_price = data['close'].iloc[-1]
+        st.write(f"🔍 DEBUG: Current price: ${current_price:.2f}")
+        
+        # Generate predictions
+        st.write("🔍 DEBUG: Starting prediction generation...")
+        
         if hasattr(model_trainer, 'predict_future_prices'):
-            # Jika method ada di model_trainer
-            predictions = model_trainer.predict_future_prices(
-                data_with_features, feature_names, forecast_days
-            )
+            st.write("🔍 DEBUG: Using model_trainer.predict_future_prices")
+            try:
+                predictions = model_trainer.predict_future_prices(
+                    data_with_features, feature_names, forecast_days
+                )
+                st.write(f"🔍 DEBUG: Predictions received: {len(predictions)} models")
+            except Exception as e:
+                st.error(f"❌ Error in predict_future_prices: {e}")
+                predictions = None
         else:
-            # Jika method tidak ada, gunakan external function
+            st.write("🔍 DEBUG: Using predict_with_models")
             predictions = predict_with_models(
                 model_trainer, data_with_features, feature_names, forecast_days
             )
+        
+        # Validasi predictions
+        if predictions is None:
+            st.error("❌ Predictions is None")
+            show_mock_predictions(data, forecast_days)
+            return
+            
+        if len(predictions) == 0:
+            st.error("❌ No predictions generated")
+            show_mock_predictions(data, forecast_days)
+            return
+            
+        st.write(f"🔍 DEBUG: Raw predictions: {list(predictions.keys())}")
+        
+        # Filter valid predictions
+        valid_predictions = {}
+        for model_name, pred_values in predictions.items():
+            st.write(f"🔍 DEBUG: Checking {model_name}: {pred_values}")
+            
+            if (pred_values is not None and 
+                len(pred_values) == forecast_days and 
+                not np.isnan(pred_values).any()):
+                
+                # Check if predictions are reasonable
+                max_reasonable = current_price * 1.5
+                min_reasonable = current_price * 0.5
+                
+                if (np.max(pred_values) < max_reasonable and 
+                    np.min(pred_values) > min_reasonable):
+                    valid_predictions[model_name] = pred_values
+                    st.write(f"✅ {model_name}: Valid predictions")
+                else:
+                    st.warning(f"⚠️ {model_name}: Unreasonable predictions")
+                    # Fallback
+                    trend = np.linspace(0, 0.02, forecast_days)
+                    valid_predictions[model_name] = current_price * (1 + trend)
+            else:
+                st.warning(f"⚠️ {model_name}: Invalid predictions")
+                # Fallback
+                valid_predictions[model_name] = [current_price] * forecast_days
+        
+        st.write(f"🔍 DEBUG: Valid predictions: {len(valid_predictions)} models")
+        
+        if not valid_predictions:
+            st.error("❌ No valid predictions after filtering")
+            show_mock_predictions(data, forecast_days)
+            return
         
         # Create future dates
         future_dates = pd.date_range(
@@ -227,13 +399,15 @@ def show_predictions(data, data_with_features, feature_names, forecast_days, mod
             freq='D'
         )
         
+        st.write("🔍 DEBUG: Starting to display predictions...")
+        
         # Display predictions
-        st.subheader("📈 Real Price Forecast (Using Trained Models)")
+        st.subheader("📈 Real Price Forecast")
         
         # Create prediction chart
         fig_pred = go.Figure()
         
-        # Historical data (last 60 days for context)
+        # Historical data
         lookback_days = min(60, len(data))
         fig_pred.add_trace(go.Scatter(
             x=data.index[-lookback_days:],
@@ -243,51 +417,40 @@ def show_predictions(data, data_with_features, feature_names, forecast_days, mod
             mode='lines'
         ))
         
+        # Current price marker
+        fig_pred.add_trace(go.Scatter(
+            x=[data.index[-1]],
+            y=[current_price],
+            name='Current Price',
+            mode='markers',
+            marker=dict(color='yellow', size=10, symbol='star')
+        ))
+        
         # Predictions for each model
         colors = {
-            'lstm': '#ff6b6b',
-            'bilstm': '#4ecdc4', 
-            'cnn_lstm': '#45b7d1',
-            'cnn_bilstm': '#96ceb4',
-            'random_forest': '#feca57',
-            'linear_regression': '#ff9ff3',
-            'svr': '#54a0ff'
+            'lstm': '#ff6b6b', 'bilstm': '#4ecdc4', 'cnn_lstm': '#45b7d1',
+            'cnn_bilstm': '#96ceb4', 'random_forest': '#feca57',
+            'linear_regression': '#ff9ff3', 'svr': '#54a0ff'
         }
         
-        # Model display names
         display_names = {
-            'lstm': 'LSTM',
-            'bilstm': 'BiLSTM',
-            'cnn_lstm': 'CNN-LSTM', 
-            'cnn_bilstm': 'CNN-BiLSTM',
-            'random_forest': 'Random Forest',
-            'linear_regression': 'Linear Regression',
-            'svr': 'SVR'
+            'lstm': 'LSTM', 'bilstm': 'BiLSTM', 'cnn_lstm': 'CNN-LSTM',
+            'cnn_bilstm': 'CNN-BiLSTM', 'random_forest': 'Random Forest',
+            'linear_regression': 'Linear Regression', 'svr': 'SVR'
         }
         
-        models_with_predictions = 0
-        for model_name, pred_values in predictions.items():
-            if model_name in display_names and len(pred_values) > 0:
+        for model_name, pred_values in valid_predictions.items():
+            if model_name in display_names:
                 fig_pred.add_trace(go.Scatter(
                     x=future_dates,
                     y=pred_values,
                     name=f'{display_names[model_name]} Forecast',
-                    line=dict(
-                        color=colors.get(model_name, '#666666'), 
-                        width=2, 
-                        dash='dash'
-                    ),
+                    line=dict(color=colors.get(model_name, '#666666'), width=2, dash='dash'),
                     mode='lines+markers'
                 ))
-                models_with_predictions += 1
-        
-        if models_with_predictions == 0:
-            st.error("❌ No valid predictions generated. Using fallback.")
-            show_mock_predictions(data, forecast_days)
-            return
         
         fig_pred.update_layout(
-            title=f"Real Price Forecast - Next {forecast_days} Days",
+            title=f"Price Forecast - Next {forecast_days} Days",
             xaxis_title="Date",
             yaxis_title="Price (USD)",
             height=500,
@@ -299,83 +462,30 @@ def show_predictions(data, data_with_features, feature_names, forecast_days, mod
         
         # Prediction table
         st.subheader("📋 Prediction Values (USD)")
-        pred_df = pd.DataFrame(predictions, index=future_dates)
-        
-        # Use display names for columns
+        pred_df = pd.DataFrame(valid_predictions, index=future_dates)
         pred_df_display = pred_df.rename(columns=display_names)
         pred_df_display['Average'] = pred_df_display.mean(axis=1)
         
-        # Format for display
-        styled_df = pred_df_display.style.format("${:.2f}")
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(pred_df_display.style.format("${:.2f}"), use_container_width=True)
         
-        # Model confidence indicators
-        st.subheader("🎯 Model Confidence")
+        st.success("✅ Predictions displayed successfully!")
         
-        # Calculate confidence based on prediction variance
-        confidence_data = []
-        for model_name, preds in predictions.items():
-            if model_name in display_names and len(preds) > 0:
-                # Simple confidence metric (inverse of prediction range)
-                pred_range = np.ptp(preds)  # Peak-to-peak range
-                confidence = max(0, 100 - (pred_range / (np.mean(preds) + 1e-8) * 100))
-                trend = '📈' if preds[-1] > preds[0] else '📉'
-                confidence_data.append({
-                    'Model': display_names[model_name],
-                    'Confidence': f"{confidence:.1f}%",
-                    'Trend': trend,
-                    'Prediction': f"${preds[-1]:.2f}"
-                })
-        
-        if confidence_data:
-            confidence_df = pd.DataFrame(confidence_data)
-            st.dataframe(confidence_df, use_container_width=True)
-        
-        # Trading recommendation based on ensemble
-        st.subheader("💡 Trading Recommendation")
-        
-        # Use weighted average
-        avg_predictions = pred_df_display['Average']
-        current_price = data['close'].iloc[-1]
-        avg_prediction = avg_predictions.iloc[-1]  # Final day prediction
-        
-        price_change_pct = ((avg_prediction - current_price) / current_price) * 100
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Current Price", f"${current_price:.2f}")
-        with col2:
-            st.metric("Predicted Price", f"${avg_prediction:.2f}")
-        with col3:
-            st.metric("Expected Change", f"{price_change_pct:+.2f}%")
-        with col4:
-            # Volatility indicator
-            all_preds = np.concatenate([p for p in predictions.values() if len(p) > 0])
-            volatility = np.std(all_preds) / current_price * 100 if len(all_preds) > 0 else 0
-            st.metric("Prediction Volatility", f"{volatility:.2f}%")
-        
-        # Enhanced trading signals
-        if price_change_pct > 8:
-            st.success("🚀 **STRONG BUY** - Significant upside predicted (+8%+)")
-        elif price_change_pct > 3:
-            st.success("📈 **BUY** - Good upside predicted (+3% to +8%)")
-        elif price_change_pct > 0:
-            st.info("👍 **MODERATE BUY** - Small upside predicted (0% to +3%)")
-        elif price_change_pct > -3:
-            st.warning("⚖️ **HOLD** - Minimal movement expected (-3% to 0%)")
-        elif price_change_pct > -8:
-            st.error("📉 **SELL** - Downside predicted (-8% to -3%)")
-        else:
-            st.error("💀 **STRONG SELL** - Significant downside predicted (-8%+)")
-            
     except Exception as e:
-        st.error(f"❌ Error generating predictions: {str(e)}")
-        # Fallback to mock predictions
-        st.info("Using fallback predictions due to error...")
+        st.error(f"❌ Error in show_predictions: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        st.info("Using fallback predictions...")
         show_mock_predictions(data, forecast_days)
 
 def show_mock_predictions(data, forecast_days):
-    """Fallback mock predictions dengan fixed arguments"""
+    """Fallback mock predictions dengan current_price yang terdefinisi"""
+    
+    # ✅ FIX: Pastikan current_price tersedia
+    try:
+        current_price = data['close'].iloc[-1]
+    except:
+        current_price = 1000  # Default fallback
+    
     # Create future dates
     future_dates = pd.date_range(
         start=data.index[-1] + timedelta(days=1),
@@ -383,16 +493,15 @@ def show_mock_predictions(data, forecast_days):
         freq='D'
     )
     
-    # Create mock predictions based on last price
-    last_price = data['close'].iloc[-1]
+    # Create realistic mock predictions based on current_price
     predictions = {
-        'lstm': last_price * (1 + np.random.uniform(-0.05, 0.08, forecast_days)),
-        'bilstm': last_price * (1 + np.random.uniform(-0.04, 0.07, forecast_days)),
-        'cnn_lstm': last_price * (1 + np.random.uniform(-0.03, 0.06, forecast_days)),
-        'cnn_bilstm': last_price * (1 + np.random.uniform(-0.04, 0.06, forecast_days)),
-        'random_forest': last_price * (1 + np.random.uniform(-0.02, 0.05, forecast_days)),
-        'linear_regression': last_price * (1 + np.random.uniform(-0.01, 0.04, forecast_days)),
-        'svr': last_price * (1 + np.random.uniform(-0.03, 0.05, forecast_days))
+        'lstm': current_price * (1 + np.random.uniform(-0.05, 0.08, forecast_days)),
+        'bilstm': current_price * (1 + np.random.uniform(-0.04, 0.07, forecast_days)),
+        'cnn_lstm': current_price * (1 + np.random.uniform(-0.03, 0.06, forecast_days)),
+        'cnn_bilstm': current_price * (1 + np.random.uniform(-0.04, 0.06, forecast_days)),
+        'random_forest': current_price * (1 + np.random.uniform(-0.02, 0.05, forecast_days)),
+        'linear_regression': current_price * (1 + np.random.uniform(-0.01, 0.04, forecast_days)),
+        'svr': current_price * (1 + np.random.uniform(-0.03, 0.05, forecast_days))
     }
     
     # Display predictions
@@ -401,12 +510,22 @@ def show_mock_predictions(data, forecast_days):
     # Create prediction chart
     fig_pred = go.Figure()
     
-    # Historical data
+    # Historical data (last 30 days)
+    lookback_days = min(30, len(data))
     fig_pred.add_trace(go.Scatter(
-        x=data.index[-30:],
-        y=data['close'].iloc[-30:],
+        x=data.index[-lookback_days:],
+        y=data['close'].iloc[-lookback_days:],
         name='Historical Price',
         line=dict(color='white', width=3)
+    ))
+    
+    # Current price marker
+    fig_pred.add_trace(go.Scatter(
+        x=[data.index[-1]],
+        y=[current_price],
+        name='Current Price',
+        mode='markers',
+        marker=dict(color='yellow', size=10, symbol='star')
     ))
     
     # Predictions for each model
@@ -414,13 +533,9 @@ def show_mock_predictions(data, forecast_days):
     
     # Model display names
     display_names = {
-        'lstm': 'LSTM',
-        'bilstm': 'BiLSTM',
-        'cnn_lstm': 'CNN-LSTM', 
-        'cnn_bilstm': 'CNN-BiLSTM',
-        'random_forest': 'Random Forest',
-        'linear_regression': 'Linear Regression',
-        'svr': 'SVR'
+        'lstm': 'LSTM', 'bilstm': 'BiLSTM', 'cnn_lstm': 'CNN-LSTM',
+        'cnn_bilstm': 'CNN-BiLSTM', 'random_forest': 'Random Forest',
+        'linear_regression': 'Linear Regression', 'svr': 'SVR'
     }
     
     for i, (model_name, pred_values) in enumerate(predictions.items()):
@@ -458,7 +573,6 @@ def show_mock_predictions(data, forecast_days):
     # Trading recommendation
     st.subheader("🎯 Trading Recommendation (Based on Mock Data)")
     avg_predictions = pred_df_display['Average']
-    current_price = data['close'].iloc[-1]
     avg_prediction = avg_predictions.iloc[-1]
     
     price_change_pct = ((avg_prediction - current_price) / current_price) * 100
@@ -481,8 +595,6 @@ def show_mock_predictions(data, forecast_days):
         st.error("📉 **SELL** - Downside predicted")
     
     st.warning("⚠️ Note: This is mock data. Run full analysis for real predictions.")
-    
-    # ... (rest of your existing mock prediction code)
 
 # Initialize session state variables
 if 'analysis_run' not in st.session_state:
@@ -655,37 +767,51 @@ if st.sidebar.button("Run Full Analysis", key="run_analysis_button", type="prima
                 # Auto-train models
                 if selected_models:
                     with st.spinner(f"Training {len(selected_models)} models..."):
-                        model_trainer = ModelTrainer(
-                            lookback_days=lookback_days, 
-                            forecast_days=forecast_days
-                        )
-                        
-                        X, y = model_trainer.prepare_sequences(
-                            st.session_state.data_with_features, 
-                            st.session_state.feature_names
-                        )
-                        
-                        if len(X) > 0:
-                            split_idx = int(0.8 * len(X))
-                            X_train, X_test = X[:split_idx], X[split_idx:]
-                            y_train, y_test = y[:split_idx], y[split_idx:]
-                            
-                            models = model_trainer.train_models(
-                                X_train, y_train, X_test, y_test, 
-                                st.session_state.feature_names, selected_models
+                        try:
+                            model_trainer = ModelTrainer(
+                                lookback_days=lookback_days, 
+                                forecast_days=forecast_days
                             )
                             
-                            metrics = model_trainer.evaluate_models(X_test, y_test)
+                            X, y = model_trainer.prepare_sequences(
+                                st.session_state.data_with_features, 
+                                st.session_state.feature_names
+                            )
                             
-                            st.session_state.models = models
-                            st.session_state.metrics = metrics
-                            st.session_state.models_trained = True
-                            st.session_state.model_trainer = model_trainer  # ✅ SIMPAN MODEL TRAINER
-                            
-                            st.success(f"✅ Analysis completed for {selected_symbol}!")
-                            
-                        else:
-                            st.error("❌ Not enough data for training sequences.")
+                            if len(X) > 0:
+                                split_idx = int(0.8 * len(X))
+                                X_train, X_test = X[:split_idx], X[split_idx:]
+                                y_train, y_test = y[:split_idx], y[split_idx:]
+                                
+                                # ✅ FIX: Check if train_models method exists
+                                if hasattr(model_trainer, 'train_models'):
+                                    models = model_trainer.train_models(
+                                        X_train, y_train, X_test, y_test, 
+                                        st.session_state.feature_names, selected_models
+                                    )
+                                    
+                                    metrics = model_trainer.evaluate_models(X_test, y_test)
+                                    
+                                    st.session_state.models = models
+                                    st.session_state.metrics = metrics
+                                    st.session_state.models_trained = True
+                                    st.session_state.model_trainer = model_trainer
+                                    
+                                    st.success(f"✅ Analysis completed for {selected_symbol}!")
+                                    st.success(f"✅ {len(models)} models trained successfully!")
+                                    
+                                else:
+                                    st.error("❌ ModelTrainer doesn't have train_models method!")
+                                    # Fallback: create simple models
+                                    st.session_state.models_trained = False
+                                    
+                            else:
+                                st.error("❌ Not enough data for training sequences.")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error during model training: {str(e)}")
+                            import traceback
+                            st.code(traceback.format_exc())
                 else:
                     st.warning("No models selected for training.")
                 
@@ -900,179 +1026,170 @@ if st.session_state.analysis_run:
                     st.info("No indicators available for selected category")
         with tab4:
             st.header("🤖 Machine Learning Models")
-    
+            
             if not st.session_state.models_trained:
                 st.warning("Models not trained yet. Run analysis first.")
+                
+                # Show what's missing
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    status = "✅" if st.session_state.data is not None else "❌"
+                    st.write(f"{status} Data Loaded")
+                with col2:
+                    status = "✅" if st.session_state.technical_calculated else "❌" 
+                    st.write(f"{status} Technical Indicators")
+                with col3:
+                    status = "✅" if st.session_state.models_trained else "❌"
+                    st.write(f"{status} Models Trained")
+                    
             else:
                 metrics = st.session_state.metrics
-        
+                
                 # Model performance comparison
                 st.subheader("🏆 Model Performance Comparison")
-        
-                # Create enhanced performance summary
+                
+                # Create performance summary
                 performance_data = []
-                training_info_data = []
-        
+                
                 for model_name, model_data in metrics.items():
                     day_metrics = model_data.get('day_metrics', {})
-                    training_info = model_data.get('training_info', {})
-            
                     first_day = day_metrics.get('day_1', {})
+                    
                     performance_data.append({
                         'Model': model_name.replace('_', ' ').title(),
                         'MAE': first_day.get('mae', 0),
                         'RMSE': first_day.get('rmse', 0),
                         'R²': first_day.get('r2', 0),
-                        'MAPE': first_day.get('mape', 0)
+                        'Direction Acc': f"{first_day.get('direction_accuracy', 0)*100:.1f}%"
                     })
-            
-                    # Collect training info
-                    if training_info:
-                        training_info_data.append({
-                            'Model': model_name.replace('_', ' ').title(),
-                            'Epochs': training_info.get('final_epochs', 'N/A'),
-                            'Best Val Loss': f"{training_info.get('best_val_loss', 0):.4f}",
-                            'Final Val Loss': f"{training_info.get('final_val_loss', 0):.4f}"
-                        })
-        
-                perf_df = pd.DataFrame(performance_data)
-        
-                # Best model highlights
-                col1, col2, col3, col4 = st.columns(4)
-                if not perf_df.empty:
-                    best_mae = perf_df.loc[perf_df['MAE'].idxmin()]
-                    best_r2 = perf_df.loc[perf_df['R²'].idxmax()]
-                    best_mape = perf_df.loc[perf_df['MAPE'].idxmin()]
-            
-                    with col1:
-                        st.metric("Best (MAE)", best_mae['Model'], f"MAE: {best_mae['MAE']:.4f}")
-                    with col2:
-                        st.metric("Best (R²)", best_r2['Model'], f"R²: {best_r2['R²']:.4f}")
-                    with col3:
-                        st.metric("Best (MAPE)", best_mape['Model'], f"MAPE: {best_mape['MAPE']:.1f}%")
-                    with col4:
-                        st.metric("Models Trained", len(metrics))
-        
-                # Enhanced performance visualization
-                st.subheader("📊 Performance Metrics")
-        
-                metric_to_plot = st.selectbox(
-                    "Select Metric to Compare:",
-                    ["MAE", "RMSE", "R²", "MAPE"],
-                    key="metric_compare"
-                )
-        
-                if metric_to_plot in perf_df.columns:
-                    fig_perf = go.Figure(data=[
-                        go.Bar(
-                            name=row['Model'], 
-                            x=[row['Model']], 
-                            y=[row[metric_to_plot]],
-                            text=[f"{row[metric_to_plot]:.4f}"],
-                            textposition='auto'
-                        ) for _, row in perf_df.iterrows()
-                    ])
-            
-                    y_axis_title = {
-                        'MAE': 'Mean Absolute Error',
-                        'RMSE': 'Root Mean Square Error', 
-                        'R²': 'R² Score',
-                        'MAPE': 'Mean Absolute Percentage Error (%)'
-                    }
-            
-                    fig_perf.update_layout(
-                        title=f"{metric_to_plot} by Model",
-                        yaxis_title=y_axis_title.get(metric_to_plot, metric_to_plot),
-                        height=500,
-                        showlegend=False
-                    )
-                    st.plotly_chart(fig_perf, use_container_width=True)
-        
-                # Training History Visualization
-                if hasattr(st.session_state, 'model_trainer') and hasattr(st.session_state.model_trainer, 'histories'):
-                    st.subheader("📈 Training Progress")
-            
+                
+                if performance_data:
+                    perf_df = pd.DataFrame(performance_data)
+                    
+                    # Highlight best model for each metric
+                    styled_df = perf_df.style.highlight_min(subset=['MAE', 'RMSE'], color='lightgreen')\
+                                            .highlight_max(subset=['R²', 'Direction Acc'], color='lightgreen')
+                    
+                    st.dataframe(styled_df, use_container_width=True)
+                else:
+                    st.warning("No performance metrics available")
+                
+                # Training History Visualization - DIPERBAIKI
+                st.subheader("📈 Training Progress")
+                
+                if (hasattr(st.session_state, 'model_trainer') and 
+                    hasattr(st.session_state.model_trainer, 'histories') and
+                    st.session_state.model_trainer.histories):
+                    
                     model_for_history = st.selectbox(
                         "Select Model to View Training History:",
                         list(st.session_state.model_trainer.histories.keys()),
                         key="history_select"
                     )
-            
+                    
                     if model_for_history:
-                        fig_history = st.session_state.model_trainer.plot_training_history(model_for_history)
+                        # ✅ FIX: Gunakan method yang sudah diperbaiki
+                        if hasattr(st.session_state.model_trainer, 'plot_training_history'):
+                            fig_history = st.session_state.model_trainer.plot_training_history(model_for_history)
+                        else:
+                            # Fallback
+                            fig_history = create_simple_training_plot(
+                                st.session_state.model_trainer.histories[model_for_history],
+                                model_for_history
+                            )
+                        
                         if fig_history:
                             st.plotly_chart(fig_history, use_container_width=True)
-                    
+                            
                             # Show training summary
                             history = st.session_state.model_trainer.histories[model_for_history]
                             final_epoch = len(history.history['loss'])
-                            best_epoch = np.argmin(history.history['val_loss']) + 1
-                            best_val_loss = min(history.history['val_loss'])
-                    
+                            
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.info(f"**Final Epoch:** {final_epoch}")
                             with col2:
-                                st.info(f"**Best Epoch:** {best_epoch}")
+                                if 'val_loss' in history.history:
+                                    best_epoch = np.argmin(history.history['val_loss']) + 1
+                                    st.info(f"**Best Epoch:** {best_epoch}")
+                                else:
+                                    st.info("**No Validation Data**")
                             with col3:
-                                st.info(f"**Best Val Loss:** {best_val_loss:.4f}")
-        
-                # Training Information Table
-                if training_info_data:
-                    st.subheader("⚙️ Training Configuration")
-                    training_df = pd.DataFrame(training_info_data)
-                    st.dataframe(training_df, use_container_width=True)
-             
-        # Dalam with tab5: - UPDATE dengan better error handling
+                                best_loss = min(history.history['loss'])
+                                st.info(f"**Best Loss:** {best_loss:.4f}")
+                        else:
+                            st.warning("Could not generate training history plot")
+                else:
+                    st.info("No training history available. Only deep learning models have training history.")
+                    
+                    # Show available models
+                    if hasattr(st.session_state, 'model_trainer') and st.session_state.model_trainer.models:
+                        st.write("**Available Models:**", list(st.session_state.model_trainer.models.keys()))
+                    
+                # Dalam with tab5: - UPDATE dengan better error handling
 
-        with tab5:
-            st.header("🎯 Price Predictions")
-    
-            if not st.session_state.models_trained:
-                st.warning("⚠️ Please train models first to generate real predictions.")
-                st.info("Click 'Run Full Analysis' in the sidebar to train models.")
-        
-                # Show mock predictions as preview
-                if st.session_state.data is not None:
-                    st.subheader("Preview with Mock Data")
-                    if st.button("Show Mock Predictions", key="mock_predict_btn"):
-                        show_mock_predictions(st.session_state.data, forecast_days)
-            else:
-                # Prediction interface untuk trained models
-                st.subheader("Future Price Forecast")
-        
-                st.info("""
-                **Real Prediction Features:**
-                - Multi-day price forecasts using your trained models
-                - Model confidence indicators
-                - Ensemble-based trading signals
-                - Consistent results (not random)
-                """)
-        
-                if st.button("Generate Real Predictions", type="primary", key="real_predict_btn"):
-                    with st.spinner("Generating predictions using your trained models..."):
-                        try:
-                            # Check if model_trainer exists and has models
-                            if (st.session_state.model_trainer is not None and 
-                                hasattr(st.session_state.model_trainer, 'models') and 
-                                st.session_state.model_trainer.models):
+                with tab5:
+                    st.header("🎯 Price Predictions")
+                    
+                    # Debug info
+                    with st.expander("🔧 Debug Info", expanded=False):
+                        st.write("Session State Status:")
+                        st.json({
+                            'data_loaded': st.session_state.data is not None,
+                            'features_calculated': st.session_state.data_with_features is not None,
+                            'feature_names_count': len(st.session_state.feature_names) if st.session_state.feature_names else 0,
+                            'models_trained': st.session_state.models_trained,
+                            'model_trainer_available': st.session_state.model_trainer is not None,
+                            'models_in_trainer': list(st.session_state.model_trainer.models.keys()) if st.session_state.model_trainer else []
+                        })
+                    
+                    if not st.session_state.models_trained:
+                        st.error("""
+                        ❌ Models belum trained! Silakan:
+                        1. Pilih cryptocurrency dan models di sidebar
+                        2. Klik 'Run Full Analysis'
+                        3. Tunggu sampai training selesai
+                        """)
                         
-                                show_predictions(
-                                    data=st.session_state.data,
-                                    data_with_features=st.session_state.data_with_features,
-                                    feature_names=st.session_state.feature_names,
-                                    forecast_days=forecast_days,
-                                    model_trainer=st.session_state.model_trainer
-                                )
-                            else:
-                                st.error("❌ Model trainer not properly initialized.")
-                                st.info("Please run the analysis again.")
-                                show_mock_predictions(st.session_state.data, forecast_days)
+                        if st.button("🚀 Run Full Analysis Now", type="primary"):
+                            st.session_state.analysis_run = True
+                            st.rerun()
+                            
+                    else:
+                        st.subheader("Future Price Forecast")
                         
-                        except Exception as e:
-                            st.error(f"❌ Prediction error: {str(e)}")
-                            st.info("Showing mock predictions as fallback...")
-                            show_mock_predictions(st.session_state.data, forecast_days)
+                        # Validasi final sebelum prediction
+                        can_predict = all([
+                            st.session_state.data is not None,
+                            st.session_state.data_with_features is not None,
+                            st.session_state.feature_names is not None and len(st.session_state.feature_names) > 0,
+                            st.session_state.model_trainer is not None,
+                            hasattr(st.session_state.model_trainer, 'models'),
+                            len(st.session_state.model_trainer.models) > 0
+                        ])
+                        
+                        if not can_predict:
+                            st.error("❌ Cannot generate predictions - missing required data")
+                            st.info("Please run 'Run Full Analysis' again")
+                        else:
+                            st.success("✅ Ready for predictions!")
+                            
+                            if st.button("Generate Real Predictions", type="primary", key="real_predict_btn"):
+                                try:
+                                    with st.spinner("🔄 Generating predictions..."):
+                                        # Call show_predictions
+                                        show_predictions(
+                                            data=st.session_state.data,
+                                            data_with_features=st.session_state.data_with_features,
+                                            feature_names=st.session_state.feature_names,
+                                            forecast_days=forecast_days,
+                                            model_trainer=st.session_state.model_trainer
+                                        )
+                                except Exception as e:
+                                    st.error(f"❌ Prediction error: {str(e)}")
+                                    import traceback
+                                    with st.expander("Technical Details"):
+                                        st.code(traceback.format_exc())
         
         with tab6:
             st.header("📋 Analysis Report")
