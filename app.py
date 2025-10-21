@@ -7,6 +7,10 @@ from plotly.subplots import make_subplots
 import warnings
 import sys
 import os
+import subprocess
+import threading
+import queue
+import time
 from datetime import datetime, timedelta
 
 # Add core directory to path
@@ -135,6 +139,328 @@ except ImportError as e:
         def __init__(self, initial_capital=10000):
             pass
 # Tambahkan di app.py (sebelum helper functions)
+def run_crypto_scanner_real_time(params, output_queue):
+    """Run crypto_scanner.py dan capture output real-time"""
+    try:
+        # Build command dari parameters
+        cmd = [
+            "python", "crypto_scanner.py",
+            "--preset", params['preset'],
+            "--exchanges", params['exchanges'],
+            "--top", str(params['top']),
+            "--ltf_fetch_limit", str(params['ltf_fetch_limit']),
+            "--min_24h_quotevol_usd", str(params['min_24h_quotevol_usd']),
+            "--min_price_usd", str(params['min_price_usd']),
+            "--min_depth_usd", str(params['min_depth_usd']),
+            "--depth_window_pct", str(params['depth_window_pct']),
+            "--max_spread_bps", str(params['max_spread_bps']),
+            "--htf_logic", params['htf_logic'],
+            "--adx_min", str(params['adx_min']),
+            "--adx_max", str(params['adx_max']),
+            "--ma_dist_pct_max", str(params['ma_dist_pct_max']),
+            "--bbw_rank_min", str(params['bbw_rank_min']),
+            "--bbw_rank_max", str(params['bbw_rank_max']),
+            "--ltf", params['ltf'],
+            "--rsi_long", str(params['rsi_long']),
+            "--rsi_short", str(params['rsi_short']),
+            "--rsi_cross_lookback", str(params['rsi_cross_lookback']),
+            "--vol_ratio_max", str(params['vol_ratio_max']),
+            "--atr_sl_mult", str(params['atr_sl_mult']),
+            "--atr_tp_mult", str(params['atr_tp_mult']),
+            "--min_rr1", str(params['min_rr1']),
+            "--budget_usd", str(params['budget_usd']),
+            "--risk_pct", str(params['risk_pct']),
+            "--max_positions", str(params['max_positions']),
+            "--max_leverage", str(params['max_leverage']),
+            "--eta_horizon_bars", str(params['eta_horizon_bars']),
+            "--eta_back_bars", str(params['eta_back_bars']),
+            "--eta_min_samples", str(params['eta_min_samples']),
+            "--eta_min_p", str(params['eta_min_p']),
+            "--min_score", str(params['min_score']),
+        ]
+        
+        # Add optional flags
+        if params.get('dedupe_bases', False):
+            cmd.append("--dedupe_bases")
+        if params.get('eta_enable', False):
+            cmd.append("--eta_enable")
+        if params.get('eta_gate_enable', False):
+            cmd.append("--eta_gate_enable")
+        if params.get('eta_vol_adjust', False):
+            cmd.append("--eta_vol_adjust")
+        if params.get('eta_require_rsi_adx', False):
+            cmd.append("--eta_require_rsi_adx")
+        if params.get('sort_by_score', False):
+            cmd.append("--sort_by_score")
+        if params.get('ltf_bb_touch', False):
+            cmd.append("--ltf_bb_touch")
+            cmd.extend(["--ltf_bb_touch_slack_pct", str(params['ltf_bb_touch_slack_pct'])])
+            cmd.extend(["--ltf_bb_touch_lookback", str(params['ltf_bb_touch_lookback'])])
+        if params.get('trigger_touch_fallback', False):
+            cmd.append("--trigger_touch_fallback")
+        if params.get('macro_blackout_enable', False):
+            cmd.append("--macro_blackout_enable")
+            cmd.extend(["--macro_file", params['macro_file']])
+            cmd.extend(["--macro_before_min", str(params['macro_before_min'])])
+            cmd.extend(["--macro_after_min", str(params['macro_after_min'])])
+        if params.get('htf_rsi_mid_enable', False):
+            cmd.append("--htf_rsi_mid_enable")
+            cmd.extend(["--rsi4h_min", str(params['rsi4h_min'])])
+            cmd.extend(["--rsi4h_max", str(params['rsi4h_max'])])
+        if params.get('htf_macd_mid_enable', False):
+            cmd.append("--htf_macd_mid_enable")
+            cmd.extend(["--macd_hist_pct_max", str(params['macd_hist_pct_max'])])
+        if params.get('ma200_slope_gate_enable', False):
+            cmd.append("--ma200_slope_gate_enable")
+            cmd.extend(["--ma200_slope_max_pct_per_bar", str(params['ma200_slope_max_pct_per_bar'])])
+        if params.get('ct_override_enable', False):
+            cmd.append("--ct_override_enable")
+            cmd.extend(["--ct_rsi_long_extreme", str(params['ct_rsi_long_extreme'])])
+            cmd.extend(["--ct_rsi_short_extreme", str(params['ct_rsi_short_extreme'])])
+            cmd.extend(["--ct_dev_ma1h_min_pct", str(params['ct_dev_ma1h_min_pct'])])
+            cmd.extend(["--ct_adx1h_min", str(params['ct_adx1h_min'])])
+            cmd.extend(["--ct_bb_touch_lookback", str(params['ct_bb_touch_lookback'])])
+        if params.get('whitelist'):
+            cmd.extend(["--whitelist", params['whitelist']])
+        if params.get('why', False):
+            cmd.append("--why")
+        if params.get('notify_telegram', False):
+            cmd.append("--notify_telegram")
+            if params.get('telegram_bot_token'):
+                cmd.extend(["--telegram_bot_token", params['telegram_bot_token']])
+            if params.get('telegram_chat_id'):
+                cmd.extend(["--telegram_chat_id", params['telegram_chat_id']])
+        
+        output_queue.put(f"🚀 Starting crypto scanner with command:\n{' '.join(cmd)}\n")
+        
+        # Run process dengan real-time output
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+        
+        # Read output line by line
+        for line in process.stdout:
+            output_queue.put(line)
+            
+        # Wait for process to complete
+        return_code = process.wait()
+        
+        if return_code == 0:
+            output_queue.put("✅ Crypto scanner completed successfully!")
+        else:
+            output_queue.put(f"❌ Crypto scanner failed with return code: {return_code}")
+            
+    except Exception as e:
+        output_queue.put(f"❌ Error running crypto scanner: {str(e)}")
+
+def show_crypto_scanner_real_time():
+    """Display Crypto Scanner UI dengan real-time output"""
+    st.header("🔍 Crypto Scanner - Real-time Execution")
+    
+    # Parameter configuration
+    with st.expander("⚙️ Scanner Configuration", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            preset = st.selectbox("Strategy Preset", ["conservative", "moderate", "aggressive"], index=0)
+            exchanges = st.multiselect("Exchanges", ["okx", "gateio", "binance"], default=["okx", "gateio", "binance"])
+            top = st.number_input("Top Coins", 50, 300, 160)
+            min_vol = st.number_input("Min 24h Volume (M)", 5, 50, 15)
+            whitelist = st.text_input("Whitelist", "BTC,ETH,SOL,BNB,LINK,AVAX,LTC,XRP,DOGE,ADA")
+            
+        with col2:
+            rsi_long = st.slider("RSI Long", 20, 40, 38)
+            rsi_short = st.slider("RSI Short", 60, 80, 62)
+            budget_usd = st.number_input("Budget USD", 50, 1000, 200)
+            max_positions = st.number_input("Max Positions", 1, 10, 2)
+    
+    # Advanced parameters
+    with st.expander("🔧 Advanced Parameters", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Risk Management")
+            risk_pct = st.number_input("Risk %", 0.001, 0.02, 0.005, 0.001, format="%.3f")
+            max_leverage = st.number_input("Max Leverage", 1, 20, 5)
+            atr_sl_mult = st.number_input("ATR SL Multiplier", 1.0, 3.0, 1.6, 0.1)
+            atr_tp_mult = st.number_input("ATR TP Multiplier", 1.0, 3.0, 1.2, 0.1)
+            
+        with col2:
+            st.subheader("Filters")
+            ltf_bb_touch = st.checkbox("LTF BB Touch", value=True)
+            vol_ratio_max = st.number_input("Max Vol Ratio", 1.0, 5.0, 3.2, 0.1)
+            min_rr1 = st.number_input("Min RR1", 0.1, 2.0, 0.7, 0.1)
+            dedupe_bases = st.checkbox("Dedupe Bases", value=True)
+    
+    # ETA Settings
+    with st.expander("🤖 ETA Settings", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            eta_enable = st.checkbox("Enable ETA", value=True)
+            eta_gate_enable = st.checkbox("ETA Gate", value=True)
+            eta_horizon_bars = st.number_input("Horizon Bars", 48, 200, 96)
+            eta_back_bars = st.number_input("Lookback Bars", 100, 600, 420)
+            
+        with col2:
+            eta_min_samples = st.number_input("Min Samples", 20, 100, 40)
+            eta_min_p = st.slider("Min Probability", 0.0, 1.0, 0.60, 0.05)
+            eta_vol_adjust = st.checkbox("Volume Adjust", value=True)
+            eta_require_rsi_adx = st.checkbox("Require RSI+ADX", value=True)
+    
+    # Run button
+    st.markdown("---")
+    
+    if 'scanner_running' not in st.session_state:
+        st.session_state.scanner_running = False
+    if 'scanner_output' not in st.session_state:
+        st.session_state.scanner_output = []
+    if 'scanner_thread' not in st.session_state:
+        st.session_state.scanner_thread = None
+    if 'output_queue' not in st.session_state:
+        st.session_state.output_queue = queue.Queue()
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        if not st.session_state.scanner_running:
+            if st.button("🚀 RUN CRYPTO SCANNER", type="primary", use_container_width=True):
+                # Prepare parameters
+                params = {
+                    'preset': preset,
+                    'exchanges': ','.join(exchanges),
+                    'top': top,
+                    'ltf_fetch_limit': 750,
+                    'min_24h_quotevol_usd': min_vol * 1_000_000,
+                    'min_price_usd': 0.01,
+                    'min_depth_usd': 20000,
+                    'depth_window_pct': 0.02,
+                    'max_spread_bps': 16,
+                    'htf_logic': 'all',
+                    'adx_min': 10,
+                    'adx_max': 40,
+                    'ma_dist_pct_max': 0.06,
+                    'bbw_rank_min': 0.02,
+                    'bbw_rank_max': 0.70,
+                    'ltf': '5m',
+                    'rsi_long': rsi_long,
+                    'rsi_short': rsi_short,
+                    'rsi_cross_lookback': 0,
+                    'ltf_bb_touch': ltf_bb_touch,
+                    'ltf_bb_touch_slack_pct': 0.0015,
+                    'ltf_bb_touch_lookback': 5,
+                    'trigger_touch_fallback': True,
+                    'vol_ratio_max': vol_ratio_max,
+                    'atr_sl_mult': atr_sl_mult,
+                    'atr_tp_mult': atr_tp_mult,
+                    'min_rr1': min_rr1,
+                    'budget_usd': budget_usd,
+                    'risk_pct': risk_pct,
+                    'max_positions': max_positions,
+                    'max_leverage': max_leverage,
+                    'dedupe_bases': dedupe_bases,
+                    'eta_enable': eta_enable,
+                    'eta_gate_enable': eta_gate_enable,
+                    'eta_horizon_bars': eta_horizon_bars,
+                    'eta_back_bars': eta_back_bars,
+                    'eta_min_samples': eta_min_samples,
+                    'eta_min_p': eta_min_p,
+                    'eta_vol_adjust': eta_vol_adjust,
+                    'eta_require_rsi_adx': eta_require_rsi_adx,
+                    'sort_by_score': True,
+                    'min_score': 0.60,
+                    'whitelist': whitelist,
+                    'macro_blackout_enable': True,
+                    'macro_file': 'macro_events.utc.txt',
+                    'macro_before_min': 45,
+                    'macro_after_min': 45,
+                    'htf_rsi_mid_enable': True,
+                    'rsi4h_min': 45,
+                    'rsi4h_max': 55,
+                    'htf_macd_mid_enable': True,
+                    'macd_hist_pct_max': 0.0030,
+                    'ma200_slope_gate_enable': True,
+                    'ma200_slope_max_pct_per_bar': 0.0015,
+                    'ct_override_enable': True,
+                    'ct_rsi_long_extreme': 20,
+                    'ct_rsi_short_extreme': 80,
+                    'ct_dev_ma1h_min_pct': 0.025,
+                    'ct_adx1h_min': 30,
+                    'ct_bb_touch_lookback': 5,
+                    'why': True,
+                    'notify_telegram': False
+                }
+                
+                # Start scanner in separate thread
+                st.session_state.scanner_running = True
+                st.session_state.scanner_output = ["🚀 Starting Crypto Scanner..."]
+                st.session_state.output_queue = queue.Queue()
+                
+                st.session_state.scanner_thread = threading.Thread(
+                    target=run_crypto_scanner_real_time,
+                    args=(params, st.session_state.output_queue)
+                )
+                st.session_state.scanner_thread.daemon = True
+                st.session_state.scanner_thread.start()
+                
+                st.rerun()
+        else:
+            if st.button("🛑 STOP SCANNER", type="secondary", use_container_width=True):
+                st.session_state.scanner_running = False
+                st.rerun()
+    
+    # Display real-time output
+    if st.session_state.scanner_running:
+        st.subheader("📊 Scanner Output (Real-time)")
+        
+        # Create output container
+        output_container = st.container()
+        
+        # Check for new output
+        try:
+            while True:
+                try:
+                    new_output = st.session_state.output_queue.get_nowait()
+                    st.session_state.scanner_output.append(new_output)
+                    
+                    # Keep only last 1000 lines to prevent memory issues
+                    if len(st.session_state.scanner_output) > 1000:
+                        st.session_state.scanner_output = st.session_state.scanner_output[-1000:]
+                        
+                except queue.Empty:
+                    break
+        except:
+            pass
+        
+        # Display output with syntax highlighting
+        with output_container:
+            # Create scrollable text area
+            output_text = "\n".join(st.session_state.scanner_output)
+            
+            # Use code block for better formatting
+            st.code(output_text, language='text')
+            
+            # Auto-refresh
+            time.sleep(1)
+            st.rerun()
+            
+        # Check if thread is still alive
+        if (st.session_state.scanner_thread and 
+            not st.session_state.scanner_thread.is_alive()):
+            st.session_state.scanner_running = False
+            st.success("✅ Scanner completed!")
+            st.rerun()
+    
+    else:
+        if st.session_state.scanner_output:
+            st.subheader("📋 Last Scanner Output")
+            output_text = "\n".join(st.session_state.scanner_output)
+            st.code(output_text, language='text')
 
 def predict_with_models(model_trainer, data_with_features, feature_names, forecast_days):
     """External prediction function dengan enhanced debugging"""
@@ -1335,6 +1661,12 @@ else:
             st.session_state.symbol = 'SOL'
             st.session_state.analysis_run = True
             st.rerun()
+    
+    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Crypto Scanner Section
+    show_crypto_scanner_real_time()
 
 # Footer
 st.markdown("---")
