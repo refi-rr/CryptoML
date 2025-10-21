@@ -12,9 +12,13 @@ import threading
 import queue
 import time
 from datetime import datetime, timedelta
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+
 
 # Add core directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # HARUS jadi command Streamlit pertama
 st.set_page_config(
@@ -26,6 +30,402 @@ st.set_page_config(
 
 # Setelah itu baru import lainnya
 warnings.filterwarnings('ignore')
+
+# =============================================
+# 📡 IMPORT CRYPTO SCANNER
+# =============================================
+
+try:
+    from crypto_scanner_50v2 import CryptoScanner
+    SCANNER_AVAILABLE = True
+except ImportError:
+    SCANNER_AVAILABLE = False
+    st.sidebar.warning("⚠️ crypto_scanner_50v2.py not found")
+
+# =============================================
+# 🎨 HELPER FUNCTIONS
+# =============================================
+
+def format_price(price):
+    """Format price dengan decimal yang sesuai"""
+    if price >= 1000:
+        return f"${price:,.2f}"
+    elif price >= 1:
+        return f"${price:.4f}"
+    else:
+        return f"${price:.8f}"
+
+
+def display_signal_card(result, signal_type="LONG"):
+    """Display individual signal card dengan styling"""
+    symbol = result['symbol']
+    signals = result['signals']
+    
+    # Get primary timeframe data (4h)
+    primary_tf = '4h' if '4h' in signals else list(signals.keys())[0]
+    data = signals[primary_tf]
+    
+    # Color scheme
+    icon = "🟢" if signal_type == "LONG" else "🔴"
+    
+    # Trading advice
+    advice = data.get('trading_advice', {})
+    
+    # Create expandable card
+    with st.expander(f"{icon} **{symbol}** - {data['trend']} (Score: {data['signal_strength']})", expanded=False):
+        
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("💰 Price", format_price(data['price']))
+        
+        with col2:
+            st.metric("📊 RSI", f"{data['rsi']:.1f}")
+        
+        with col3:
+            st.metric("💪 ADX", f"{data['adx']:.1f}")
+        
+        with col4:
+            st.metric("📈 Volume", f"{data['volume_ratio']:.2f}x")
+        
+        st.markdown("---")
+        
+        # Technical indicators
+        st.markdown("**📉 Technical Indicators:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write(f"• **Stoch K/D:** {data['stoch_k']:.1f} / {data['stoch_d']:.1f}")
+            st.write(f"• **MACD:** {data['macd']:.6f}")
+            st.write(f"• **Signal:** {data['signal_line']:.6f}")
+        
+        with col2:
+            # Support & Resistance
+            sr = data['support_resistance']
+            if sr['support']:
+                support_str = ', '.join([format_price(s) for s in sr['support'][:2]])
+                st.write(f"• **🟢 Support:** {support_str}")
+            else:
+                st.write(f"• **🟢 Support:** N/A")
+            
+            if sr['resistance']:
+                resistance_str = ', '.join([format_price(r) for r in sr['resistance'][:2]])
+                st.write(f"• **🔴 Resistance:** {resistance_str}")
+            else:
+                st.write(f"• **🔴 Resistance:** N/A")
+        
+        # Signal reasons
+        st.markdown("**🎯 Signal Reasons:**")
+        signal_text = ' • '.join(data['signals'][:5])  # Top 5 signals
+        st.info(signal_text)
+        
+        # Trading Advice
+        if advice:
+            st.markdown("---")
+            st.markdown("**💡 TRADING SETUP:**")
+            
+            entry_low, entry_high = advice['entry_zone']
+            
+            # Entry and SL in columns
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.success(f"**📍 Entry Zone:**\n\n{format_price(entry_low)} - {format_price(entry_high)}")
+            
+            with col2:
+                st.error(f"**🛑 Stop Loss:**\n\n{format_price(advice['stop_loss'])}")
+            
+            # Take profits
+            st.markdown("**🎯 Take Profit Targets:**")
+            
+            tp_cols = st.columns(3)
+            
+            for i, tp in enumerate(advice['take_profits']):
+                with tp_cols[i]:
+                    entry_mid = (entry_low + entry_high) / 2
+                    profit_pct = abs((tp['price'] - entry_mid) / entry_mid * 100)
+                    
+                    st.info(f"**{tp['level']}** ({tp['rr']})\n\n"
+                           f"{format_price(tp['price'])}\n\n"
+                           f"💰 +{profit_pct:.2f}%")
+            
+            # Risk management
+            if advice.get('position_size_advice'):
+                st.warning(f"⚖️ {advice['position_size_advice']}")
+        
+        # Multi-timeframe confirmation
+        if len(signals) > 1:
+            st.markdown("---")
+            st.markdown("**⏰ Multi-Timeframe Analysis:**")
+            
+            tf_cols = st.columns(len(signals))
+            
+            for i, (tf, tf_data) in enumerate(signals.items()):
+                with tf_cols[i]:
+                    trend_icon = "🟢" if "LONG" in tf_data['trend'] else "🔴"
+                    st.write(f"{trend_icon} **{tf.upper()}**")
+                    st.write(f"Score: {tf_data['signal_strength']}")
+                    st.write(f"RSI: {tf_data['rsi']:.1f}")
+
+
+def show_crypto_scanner():
+    """Main scanner UI - UPDATED VERSION"""
+    st.header("🔍 Advanced Crypto Scanner")
+    
+    if not SCANNER_AVAILABLE:
+        st.error("""
+        ❌ **CryptoScanner module not available**
+        
+        Please ensure `crypto_scanner_50v2.py` is in the same directory as `app.py`.
+        
+        **Current directory:** `{}`
+        """.format(os.getcwd()))
+        
+        with st.expander("📂 Files in current directory"):
+            files = os.listdir(os.getcwd())
+            st.write(files)
+        
+        return
+    
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 20px; border-radius: 10px; color: white; margin-bottom: 20px;'>
+    <h4 style='color: white; margin: 0;'>🎯 Real-time Market Scanner</h4>
+    <p style='margin: 10px 0 0 0;'>Scan top 50 crypto futures for high-probability setups with 
+    30+ technical indicators, S/R detection, and complete trading advice</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Configuration
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        top_n = st.number_input("🔝 Top Coins", 10, 100, 50, 5, 
+                                help="Number of top coins by volume to scan")
+    
+    with col2:
+        timeframes = st.multiselect(
+            "⏰ Timeframes",
+            ['1h', '4h', '1d'],
+            default=['4h', '1h'],
+            help="Select timeframes for multi-timeframe analysis"
+        )
+    
+    with col3:
+        use_bybit = st.checkbox("🌐 Use Bybit", value=False,
+                               help="Use Bybit API instead of Binance (auto-switches on error)")
+    
+    # Filters
+    with st.expander("🎚️ Signal Filters", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            min_score = st.slider("Minimum Signal Score", 0, 10, 3,
+                                help="Filter signals by strength score")
+            min_adx = st.slider("Minimum ADX", 0, 50, 20,
+                              help="Filter by trend strength (ADX)")
+        
+        with col2:
+            min_volume = st.slider("Minimum Volume Ratio", 1.0, 5.0, 1.5, 0.1,
+                                 help="Filter by volume increase")
+            rsi_range = st.slider("RSI Range", 0, 100, (20, 80),
+                                help="Filter by RSI levels")
+    
+    # Exchange info
+    st.info(f"🌐 Exchange: {'Bybit' if use_bybit else 'Binance'} Futures (Public API - No auth required)")
+    
+    # Scan button
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        scan_button = st.button("🚀 START SCANNING", type="primary", use_container_width=True)
+    
+    if scan_button:
+        if not timeframes:
+            st.error("❌ Please select at least one timeframe")
+            return
+        
+        # Initialize scanner
+        scanner = CryptoScanner(use_backup=use_bybit)
+        
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        status_text.text("🔄 Initializing scanner...")
+        progress_bar.progress(5)
+        
+        status_text.text(f"📡 Fetching top {top_n} coins from {scanner.exchange_name}...")
+        progress_bar.progress(10)
+        
+        # Start scanning
+        try:
+            with st.spinner(f"🔍 Scanning {top_n} coins across {len(timeframes)} timeframes... This may take 2-5 minutes..."):
+                results = scanner.scan_markets(timeframes=timeframes, top_n=top_n)
+            
+            progress_bar.progress(100)
+            status_text.empty()
+            progress_bar.empty()
+            
+            if not results:
+                st.warning("⚠️ No trading signals found matching the criteria")
+                return
+            
+            # Apply filters
+            filtered_results = []
+            
+            for result in results:
+                primary_signal = list(result['signals'].values())[0]
+                
+                # Apply filters
+                if (abs(primary_signal['signal_strength']) >= min_score and
+                    primary_signal['adx'] >= min_adx and
+                    primary_signal['volume_ratio'] >= min_volume and
+                    rsi_range[0] <= primary_signal['rsi'] <= rsi_range[1]):
+                    
+                    filtered_results.append(result)
+            
+            if not filtered_results:
+                st.warning(f"⚠️ Found {len(results)} signals, but none passed the filters. Try adjusting filter settings.")
+                return
+            
+            # Display results
+            st.success(f"✅ Found {len(filtered_results)} high-probability trading opportunities!")
+            
+            # Separate LONG and SHORT signals
+            long_signals = []
+            short_signals = []
+            
+            for result in filtered_results:
+                primary_trend = list(result['signals'].values())[0]['trend']
+                if 'LONG' in primary_trend:
+                    long_signals.append(result)
+                elif 'SHORT' in primary_trend:
+                    short_signals.append(result)
+            
+            # Sort by signal strength
+            long_signals.sort(key=lambda x: list(x['signals'].values())[0]['signal_strength'], reverse=True)
+            short_signals.sort(key=lambda x: abs(list(x['signals'].values())[0]['signal_strength']), reverse=True)
+            
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("📊 Total Signals", len(filtered_results))
+            
+            with col2:
+                st.metric("🟢 LONG Setups", len(long_signals))
+            
+            with col3:
+                st.metric("🔴 SHORT Setups", len(short_signals))
+            
+            with col4:
+                avg_score = np.mean([abs(list(r['signals'].values())[0]['signal_strength']) for r in filtered_results])
+                st.metric("⭐ Avg Score", f"{avg_score:.1f}")
+            
+            st.markdown("---")
+            
+            # Display LONG signals
+            if long_signals:
+                st.subheader(f"🟢 LONG SIGNALS ({len(long_signals)})")
+                st.markdown("Sorted by signal strength (highest first)")
+                
+                for result in long_signals:
+                    display_signal_card(result, signal_type="LONG")
+            
+            # Display SHORT signals
+            if short_signals:
+                st.markdown("---")
+                st.subheader(f"🔴 SHORT SIGNALS ({len(short_signals)})")
+                st.markdown("Sorted by signal strength (highest first)")
+                
+                for result in short_signals:
+                    display_signal_card(result, signal_type="SHORT")
+            
+            # Export functionality
+            st.markdown("---")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("💾 Export to CSV", use_container_width=True):
+                    # Create DataFrame for export
+                    export_data = []
+                    
+                    for result in filtered_results:
+                        symbol = result['symbol']
+                        primary_signal = list(result['signals'].values())[0]
+                        advice = primary_signal.get('trading_advice', {})
+                        
+                        row = {
+                            'Symbol': symbol,
+                            'Trend': primary_signal['trend'],
+                            'Score': primary_signal['signal_strength'],
+                            'Price': primary_signal['price'],
+                            'RSI': primary_signal['rsi'],
+                            'ADX': primary_signal['adx'],
+                            'Volume_Ratio': primary_signal['volume_ratio'],
+                        }
+                        
+                        if advice:
+                            row['Entry_Low'] = advice['entry_zone'][0]
+                            row['Entry_High'] = advice['entry_zone'][1]
+                            row['Stop_Loss'] = advice['stop_loss']
+                            row['TP1'] = advice['take_profits'][0]['price']
+                            row['TP2'] = advice['take_profits'][1]['price']
+                            row['TP3'] = advice['take_profits'][2]['price']
+                        
+                        export_data.append(row)
+                    
+                    df_export = pd.DataFrame(export_data)
+                    csv = df_export.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="⬇️ Download CSV",
+                        data=csv,
+                        file_name=f"crypto_signals_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+            
+            with col2:
+                if st.button("🔄 Refresh Scan", use_container_width=True):
+                    st.rerun()
+            
+            # Trading tips
+            st.markdown("---")
+            st.info("""
+            **📚 Trading Tips:**
+            - ✅ Always use proper risk management (1-2% per trade)
+            - ✅ Wait for confirmation on multiple timeframes
+            - ✅ Consider market conditions and news events
+            - ✅ Take partial profits at TP1, let winners run to TP2/TP3
+            - ✅ Move SL to breakeven after TP1 is hit
+            - ✅ Never risk more than you can afford to lose
+            """)
+        
+        except Exception as e:
+            st.error(f"❌ Error during scanning: {str(e)}")
+            import traceback
+            with st.expander("🔧 Technical Details"):
+                st.code(traceback.format_exc())
+
+# =============================================
+# 🏠 MAIN APP
+# =============================================
+
+# Sidebar info
+st.sidebar.title("📊 System Info")
+st.sidebar.info(f"""
+**Status:** ✅ Online
+
+**Scanner:** {'✅ Available' if SCANNER_AVAILABLE else '❌ Unavailable'}
+
+**Current Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+""")
 
 # Install missing packages secara otomatis
 try:
@@ -138,329 +538,7 @@ except ImportError as e:
     class Backtester:
         def __init__(self, initial_capital=10000):
             pass
-# Tambahkan di app.py (sebelum helper functions)
-def run_crypto_scanner_real_time(params, output_queue):
-    """Run crypto_scanner.py dan capture output real-time"""
-    try:
-        # Build command dari parameters
-        cmd = [
-            "python", "crypto_scanner.py",
-            "--preset", params['preset'],
-            "--exchanges", params['exchanges'],
-            "--top", str(params['top']),
-            "--ltf_fetch_limit", str(params['ltf_fetch_limit']),
-            "--min_24h_quotevol_usd", str(params['min_24h_quotevol_usd']),
-            "--min_price_usd", str(params['min_price_usd']),
-            "--min_depth_usd", str(params['min_depth_usd']),
-            "--depth_window_pct", str(params['depth_window_pct']),
-            "--max_spread_bps", str(params['max_spread_bps']),
-            "--htf_logic", params['htf_logic'],
-            "--adx_min", str(params['adx_min']),
-            "--adx_max", str(params['adx_max']),
-            "--ma_dist_pct_max", str(params['ma_dist_pct_max']),
-            "--bbw_rank_min", str(params['bbw_rank_min']),
-            "--bbw_rank_max", str(params['bbw_rank_max']),
-            "--ltf", params['ltf'],
-            "--rsi_long", str(params['rsi_long']),
-            "--rsi_short", str(params['rsi_short']),
-            "--rsi_cross_lookback", str(params['rsi_cross_lookback']),
-            "--vol_ratio_max", str(params['vol_ratio_max']),
-            "--atr_sl_mult", str(params['atr_sl_mult']),
-            "--atr_tp_mult", str(params['atr_tp_mult']),
-            "--min_rr1", str(params['min_rr1']),
-            "--budget_usd", str(params['budget_usd']),
-            "--risk_pct", str(params['risk_pct']),
-            "--max_positions", str(params['max_positions']),
-            "--max_leverage", str(params['max_leverage']),
-            "--eta_horizon_bars", str(params['eta_horizon_bars']),
-            "--eta_back_bars", str(params['eta_back_bars']),
-            "--eta_min_samples", str(params['eta_min_samples']),
-            "--eta_min_p", str(params['eta_min_p']),
-            "--min_score", str(params['min_score']),
-        ]
-        
-        # Add optional flags
-        if params.get('dedupe_bases', False):
-            cmd.append("--dedupe_bases")
-        if params.get('eta_enable', False):
-            cmd.append("--eta_enable")
-        if params.get('eta_gate_enable', False):
-            cmd.append("--eta_gate_enable")
-        if params.get('eta_vol_adjust', False):
-            cmd.append("--eta_vol_adjust")
-        if params.get('eta_require_rsi_adx', False):
-            cmd.append("--eta_require_rsi_adx")
-        if params.get('sort_by_score', False):
-            cmd.append("--sort_by_score")
-        if params.get('ltf_bb_touch', False):
-            cmd.append("--ltf_bb_touch")
-            cmd.extend(["--ltf_bb_touch_slack_pct", str(params['ltf_bb_touch_slack_pct'])])
-            cmd.extend(["--ltf_bb_touch_lookback", str(params['ltf_bb_touch_lookback'])])
-        if params.get('trigger_touch_fallback', False):
-            cmd.append("--trigger_touch_fallback")
-        if params.get('macro_blackout_enable', False):
-            cmd.append("--macro_blackout_enable")
-            cmd.extend(["--macro_file", params['macro_file']])
-            cmd.extend(["--macro_before_min", str(params['macro_before_min'])])
-            cmd.extend(["--macro_after_min", str(params['macro_after_min'])])
-        if params.get('htf_rsi_mid_enable', False):
-            cmd.append("--htf_rsi_mid_enable")
-            cmd.extend(["--rsi4h_min", str(params['rsi4h_min'])])
-            cmd.extend(["--rsi4h_max", str(params['rsi4h_max'])])
-        if params.get('htf_macd_mid_enable', False):
-            cmd.append("--htf_macd_mid_enable")
-            cmd.extend(["--macd_hist_pct_max", str(params['macd_hist_pct_max'])])
-        if params.get('ma200_slope_gate_enable', False):
-            cmd.append("--ma200_slope_gate_enable")
-            cmd.extend(["--ma200_slope_max_pct_per_bar", str(params['ma200_slope_max_pct_per_bar'])])
-        if params.get('ct_override_enable', False):
-            cmd.append("--ct_override_enable")
-            cmd.extend(["--ct_rsi_long_extreme", str(params['ct_rsi_long_extreme'])])
-            cmd.extend(["--ct_rsi_short_extreme", str(params['ct_rsi_short_extreme'])])
-            cmd.extend(["--ct_dev_ma1h_min_pct", str(params['ct_dev_ma1h_min_pct'])])
-            cmd.extend(["--ct_adx1h_min", str(params['ct_adx1h_min'])])
-            cmd.extend(["--ct_bb_touch_lookback", str(params['ct_bb_touch_lookback'])])
-        if params.get('whitelist'):
-            cmd.extend(["--whitelist", params['whitelist']])
-        if params.get('why', False):
-            cmd.append("--why")
-        if params.get('notify_telegram', False):
-            cmd.append("--notify_telegram")
-            if params.get('telegram_bot_token'):
-                cmd.extend(["--telegram_bot_token", params['telegram_bot_token']])
-            if params.get('telegram_chat_id'):
-                cmd.extend(["--telegram_chat_id", params['telegram_chat_id']])
-        
-        output_queue.put(f"🚀 Starting crypto scanner with command:\n{' '.join(cmd)}\n")
-        
-        # Run process dengan real-time output
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
-        )
-        
-        # Read output line by line
-        for line in process.stdout:
-            output_queue.put(line)
-            
-        # Wait for process to complete
-        return_code = process.wait()
-        
-        if return_code == 0:
-            output_queue.put("✅ Crypto scanner completed successfully!")
-        else:
-            output_queue.put(f"❌ Crypto scanner failed with return code: {return_code}")
-            
-    except Exception as e:
-        output_queue.put(f"❌ Error running crypto scanner: {str(e)}")
 
-def show_crypto_scanner_real_time():
-    """Display Crypto Scanner UI dengan real-time output"""
-    st.header("🔍 Crypto Scanner - Real-time Execution")
-    
-    # Parameter configuration
-    with st.expander("⚙️ Scanner Configuration", expanded=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            preset = st.selectbox("Strategy Preset", ["conservative", "moderate", "aggressive"], index=0)
-            exchanges = st.multiselect("Exchanges", ["okx", "gateio", "binance"], default=["okx", "gateio", "binance"])
-            top = st.number_input("Top Coins", 50, 300, 160)
-            min_vol = st.number_input("Min 24h Volume (M)", 5, 50, 15)
-            whitelist = st.text_input("Whitelist", "BTC,ETH,SOL,BNB,LINK,AVAX,LTC,XRP,DOGE,ADA")
-            
-        with col2:
-            rsi_long = st.slider("RSI Long", 20, 40, 38)
-            rsi_short = st.slider("RSI Short", 60, 80, 62)
-            budget_usd = st.number_input("Budget USD", 50, 1000, 200)
-            max_positions = st.number_input("Max Positions", 1, 10, 2)
-    
-    # Advanced parameters
-    with st.expander("🔧 Advanced Parameters", expanded=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Risk Management")
-            risk_pct = st.number_input("Risk %", 0.001, 0.02, 0.005, 0.001, format="%.3f")
-            max_leverage = st.number_input("Max Leverage", 1, 20, 5)
-            atr_sl_mult = st.number_input("ATR SL Multiplier", 1.0, 3.0, 1.6, 0.1)
-            atr_tp_mult = st.number_input("ATR TP Multiplier", 1.0, 3.0, 1.2, 0.1)
-            
-        with col2:
-            st.subheader("Filters")
-            ltf_bb_touch = st.checkbox("LTF BB Touch", value=True)
-            vol_ratio_max = st.number_input("Max Vol Ratio", 1.0, 5.0, 3.2, 0.1)
-            min_rr1 = st.number_input("Min RR1", 0.1, 2.0, 0.7, 0.1)
-            dedupe_bases = st.checkbox("Dedupe Bases", value=True)
-    
-    # ETA Settings
-    with st.expander("🤖 ETA Settings", expanded=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            eta_enable = st.checkbox("Enable ETA", value=True)
-            eta_gate_enable = st.checkbox("ETA Gate", value=True)
-            eta_horizon_bars = st.number_input("Horizon Bars", 48, 200, 96)
-            eta_back_bars = st.number_input("Lookback Bars", 100, 600, 420)
-            
-        with col2:
-            eta_min_samples = st.number_input("Min Samples", 20, 100, 40)
-            eta_min_p = st.slider("Min Probability", 0.0, 1.0, 0.60, 0.05)
-            eta_vol_adjust = st.checkbox("Volume Adjust", value=True)
-            eta_require_rsi_adx = st.checkbox("Require RSI+ADX", value=True)
-    
-    # Run button
-    st.markdown("---")
-    
-    if 'scanner_running' not in st.session_state:
-        st.session_state.scanner_running = False
-    if 'scanner_output' not in st.session_state:
-        st.session_state.scanner_output = []
-    if 'scanner_thread' not in st.session_state:
-        st.session_state.scanner_thread = None
-    if 'output_queue' not in st.session_state:
-        st.session_state.output_queue = queue.Queue()
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        if not st.session_state.scanner_running:
-            if st.button("🚀 RUN CRYPTO SCANNER", type="primary", use_container_width=True):
-                # Prepare parameters
-                params = {
-                    'preset': preset,
-                    'exchanges': ','.join(exchanges),
-                    'top': top,
-                    'ltf_fetch_limit': 750,
-                    'min_24h_quotevol_usd': min_vol * 1_000_000,
-                    'min_price_usd': 0.01,
-                    'min_depth_usd': 20000,
-                    'depth_window_pct': 0.02,
-                    'max_spread_bps': 16,
-                    'htf_logic': 'all',
-                    'adx_min': 10,
-                    'adx_max': 40,
-                    'ma_dist_pct_max': 0.06,
-                    'bbw_rank_min': 0.02,
-                    'bbw_rank_max': 0.70,
-                    'ltf': '5m',
-                    'rsi_long': rsi_long,
-                    'rsi_short': rsi_short,
-                    'rsi_cross_lookback': 0,
-                    'ltf_bb_touch': ltf_bb_touch,
-                    'ltf_bb_touch_slack_pct': 0.0015,
-                    'ltf_bb_touch_lookback': 5,
-                    'trigger_touch_fallback': True,
-                    'vol_ratio_max': vol_ratio_max,
-                    'atr_sl_mult': atr_sl_mult,
-                    'atr_tp_mult': atr_tp_mult,
-                    'min_rr1': min_rr1,
-                    'budget_usd': budget_usd,
-                    'risk_pct': risk_pct,
-                    'max_positions': max_positions,
-                    'max_leverage': max_leverage,
-                    'dedupe_bases': dedupe_bases,
-                    'eta_enable': eta_enable,
-                    'eta_gate_enable': eta_gate_enable,
-                    'eta_horizon_bars': eta_horizon_bars,
-                    'eta_back_bars': eta_back_bars,
-                    'eta_min_samples': eta_min_samples,
-                    'eta_min_p': eta_min_p,
-                    'eta_vol_adjust': eta_vol_adjust,
-                    'eta_require_rsi_adx': eta_require_rsi_adx,
-                    'sort_by_score': True,
-                    'min_score': 0.60,
-                    'whitelist': whitelist,
-                    'macro_blackout_enable': True,
-                    'macro_file': 'macro_events.utc.txt',
-                    'macro_before_min': 45,
-                    'macro_after_min': 45,
-                    'htf_rsi_mid_enable': True,
-                    'rsi4h_min': 45,
-                    'rsi4h_max': 55,
-                    'htf_macd_mid_enable': True,
-                    'macd_hist_pct_max': 0.0030,
-                    'ma200_slope_gate_enable': True,
-                    'ma200_slope_max_pct_per_bar': 0.0015,
-                    'ct_override_enable': True,
-                    'ct_rsi_long_extreme': 20,
-                    'ct_rsi_short_extreme': 80,
-                    'ct_dev_ma1h_min_pct': 0.025,
-                    'ct_adx1h_min': 30,
-                    'ct_bb_touch_lookback': 5,
-                    'why': True,
-                    'notify_telegram': False
-                }
-                
-                # Start scanner in separate thread
-                st.session_state.scanner_running = True
-                st.session_state.scanner_output = ["🚀 Starting Crypto Scanner..."]
-                st.session_state.output_queue = queue.Queue()
-                
-                st.session_state.scanner_thread = threading.Thread(
-                    target=run_crypto_scanner_real_time,
-                    args=(params, st.session_state.output_queue)
-                )
-                st.session_state.scanner_thread.daemon = True
-                st.session_state.scanner_thread.start()
-                
-                st.rerun()
-        else:
-            if st.button("🛑 STOP SCANNER", type="secondary", use_container_width=True):
-                st.session_state.scanner_running = False
-                st.rerun()
-    
-    # Display real-time output
-    if st.session_state.scanner_running:
-        st.subheader("📊 Scanner Output (Real-time)")
-        
-        # Create output container
-        output_container = st.container()
-        
-        # Check for new output
-        try:
-            while True:
-                try:
-                    new_output = st.session_state.output_queue.get_nowait()
-                    st.session_state.scanner_output.append(new_output)
-                    
-                    # Keep only last 1000 lines to prevent memory issues
-                    if len(st.session_state.scanner_output) > 1000:
-                        st.session_state.scanner_output = st.session_state.scanner_output[-1000:]
-                        
-                except queue.Empty:
-                    break
-        except:
-            pass
-        
-        # Display output with syntax highlighting
-        with output_container:
-            # Create scrollable text area
-            output_text = "\n".join(st.session_state.scanner_output)
-            
-            # Use code block for better formatting
-            st.code(output_text, language='text')
-            
-            # Auto-refresh
-            time.sleep(1)
-            st.rerun()
-            
-        # Check if thread is still alive
-        if (st.session_state.scanner_thread and 
-            not st.session_state.scanner_thread.is_alive()):
-            st.session_state.scanner_running = False
-            st.success("✅ Scanner completed!")
-            st.rerun()
-    
-    else:
-        if st.session_state.scanner_output:
-            st.subheader("📋 Last Scanner Output")
-            output_text = "\n".join(st.session_state.scanner_output)
-            st.code(output_text, language='text')
 
 def predict_with_models(model_trainer, data_with_features, feature_names, forecast_days):
     """External prediction function dengan enhanced debugging"""
@@ -1666,7 +1744,7 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Crypto Scanner Section
-    show_crypto_scanner_real_time()
+    show_crypto_scanner()
 
 # Footer
 st.markdown("---")
