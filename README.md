@@ -34,3 +34,12 @@ Step 4: Click "Run Full Analysis"
 
 
 <img width="1916" height="916" alt="image" src="https://github.com/user-attachments/assets/934fe246-c745-464a-9c52-e49956cbcbcc" />
+
+Crypto Scanner Coin
+How it Works?
++ Scan Top 50 Coins From marketcaps
++ Using API Binance & Bybit (u can add some more)
++ Indikator using such as : RSI, Stoch RSI, Boolinger Bands, Support & Resistancem Moving Average Exponantial
+<img width="1899" height="910" alt="image" src="https://github.com/user-attachments/assets/80955081-2710-4e02-817d-4f4bd24c8333" />
+
+
