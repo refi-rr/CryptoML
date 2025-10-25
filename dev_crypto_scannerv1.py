@@ -14,7 +14,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ==================== CONFIGURATION ====================
-st.set_page_config(page_title="Crypto Futures Scanner (Beta) Do Your Own Research", layout="wide", page_icon="ðŸ“ˆ")
+st.set_page_config(page_title="Crypto Futures Scanner Pro", layout="wide", page_icon="📈")
 
 # Custom CSS
 st.markdown("""
@@ -403,10 +403,10 @@ def analyze_signal(df, timeframe):
     patterns = detect_chart_patterns(df)
     if 'GOLDEN_CROSS' in patterns:
         bullish_signals += 2
-        reasons.append("â­ Golden Cross")
+        reasons.append("⭐ Golden Cross")
     elif 'DEATH_CROSS' in patterns:
         bearish_signals += 2
-        reasons.append("â­ Death Cross")
+        reasons.append("⭐ Death Cross")
     
     # Volume
     vol_ratio = latest['volume_ratio']
@@ -430,10 +430,10 @@ def analyze_signal(df, timeframe):
     # Divergence
     if 'BULLISH_DIVERGENCE' in patterns:
         bullish_signals += 1
-        reasons.append("ðŸ“ˆ Bullish divergence")
+        reasons.append("📈 Bullish divergence")
     elif 'BEARISH_DIVERGENCE' in patterns:
         bearish_signals += 1
-        reasons.append("ðŸ“‰ Bearish divergence")
+        reasons.append("📉 Bearish divergence")
     
     # Determine signal
     if bullish_signals > bearish_signals and bullish_signals >= 3:
@@ -575,14 +575,14 @@ def generate_entry_tp_sl(df, signal_type, current_price):
     entry_note = ""
     if signal_type == 'LONG':
         if support and entry < support:
-            entry_note = "âš ï¸ Entry below support"
+            entry_note = "⚠️ Entry below support"
         elif support and (entry - support) / support * 100 > 5:
-            entry_note = "âš ï¸ Entry far from support - Wait for pullback"
+            entry_note = "⚠️ Entry far from support - Wait for pullback"
     else:
         if resistance and entry > resistance:
-            entry_note = "âš ï¸ Entry above resistance"
+            entry_note = "⚠️ Entry above resistance"
         elif resistance and (resistance - entry) / entry * 100 > 5:
-            entry_note = "âš ï¸ Entry far from resistance - Wait for rally"
+            entry_note = "⚠️ Entry far from resistance - Wait for rally"
     
     return {
         'entry': round(entry, 8),
@@ -754,16 +754,16 @@ def check_auto_refresh():
 
 # ==================== MAIN APP ====================
 def main():
-    st.markdown('<p class="main-header">ðŸš€ Crypto Futures Scanner Pro</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">🚀 Crypto Futures Scanner Pro</p>', unsafe_allow_html=True)
     
     server_time = datetime.now()
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        st.markdown(f"**ðŸ• Server Time:** {server_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.markdown(f"**🕐 Server Time:** {server_time.strftime('%Y-%m-%d %H:%M:%S')}")
     with col2:
-        st.markdown(f"**ðŸ”„ Last Refresh:** {st.session_state.last_refresh.strftime('%H:%M:%S')}")
+        st.markdown(f"**🔄 Last Refresh:** {st.session_state.last_refresh.strftime('%H:%M:%S')}")
     with col3:
-        if st.button("ðŸ”„ Refresh"):
+        if st.button("🔄 Refresh"):
             st.session_state.last_refresh = datetime.now()
             st.cache_data.clear()
             st.rerun()
@@ -771,13 +771,13 @@ def main():
     st.markdown("---")
     
     with st.sidebar:
-        st.header("âš™ï¸ Settings")
-        st.subheader("ðŸ“¡ Data Source")
+        st.header("⚙️ Settings")
+        st.subheader("📡 Data Source")
         api_source = st.selectbox("Exchange:", options=['binance', 'bybit', 'gateio'],
             format_func=lambda x: API_SOURCES[x]['name'],
             help="Auto fallback to other exchanges if unavailable")
         
-        st.subheader("ðŸ”„ Auto Refresh")
+        st.subheader("🔄 Auto Refresh")
         refresh_option = st.radio("Interval:", options=["Disabled", "Every 5 Minutes", "Every 1 Hour"], index=0)
         
         if refresh_option == "Every 5 Minutes":
@@ -790,10 +790,10 @@ def main():
         if st.session_state.refresh_interval:
             time_until = st.session_state.refresh_interval - ((datetime.now() - st.session_state.last_refresh).total_seconds() / 60)
             if time_until > 0:
-                st.info(f"â±ï¸ Next refresh: {time_until:.1f}m")
+                st.info(f"⏱️ Next refresh: {time_until:.1f}m")
         
         st.markdown("---")
-        st.subheader("ðŸŽ¯ Filters")
+        st.subheader("🎯 Filters")
         min_strength = st.slider("Min Strength (%)", 0, 100, 40)
         show_only_signals = st.checkbox("Show Only Signals", value=True)
         min_volume = st.number_input("Min Volume Ratio", 0.0, 5.0, 1.2, 0.1)
@@ -803,18 +803,18 @@ def main():
         st.cache_data.clear()
         st.rerun()
     
-    with st.spinner(f"ðŸ” Fetching top 25 from {API_SOURCES[api_source]['name']}..."):
+    with st.spinner(f"🔍 Fetching top 25 from {API_SOURCES[api_source]['name']}..."):
         source, symbols = get_top_symbols(api_source, 25)
     
     if not symbols:
-        st.error("âŒ Failed to fetch data from all exchanges.")
-        st.info("ðŸ’¡ Tried: Binance â†’ Bybit â†’ Gate.io")
+        st.error("❌ Failed to fetch data from all exchanges.")
+        st.info("💡 Tried: Binance → Bybit → Gate.io")
         return
     
     if source != api_source:
-        st.warning(f"âš ï¸ {API_SOURCES[api_source]['name']} unavailable. Using {API_SOURCES[source]['name']}")
+        st.warning(f"⚠️ {API_SOURCES[api_source]['name']} unavailable. Using {API_SOURCES[source]['name']}")
     else:
-        st.success(f"âœ… Using {API_SOURCES[source]['name']} API")
+        st.success(f"✅ Using {API_SOURCES[source]['name']} API")
     
     results = []
     progress_bar = st.progress(0)
@@ -869,16 +869,16 @@ def main():
             continue
         filtered_results.append(r)
     
-    st.markdown(f"### ðŸ“ˆ Found {len(filtered_results)} Trading Opportunities")
+    st.markdown(f"### 📈 Found {len(filtered_results)} Trading Opportunities")
     
     if not filtered_results:
-        st.info("ðŸ’¡ No signals match your filters. Try adjusting settings.")
+        st.info("💡 No signals match your filters. Try adjusting settings.")
         return
     
     filtered_results = sorted(filtered_results, key=lambda x: x['strength'], reverse=True)
     
     for result in filtered_results:
-        signal_emoji = "ðŸŸ¢" if result['consensus'] == 'LONG' else "ðŸ”´" if result['consensus'] == 'SHORT' else "âšª"
+        signal_emoji = "🟢" if result['consensus'] == 'LONG' else "🔴" if result['consensus'] == 'SHORT' else "⚪"
         
         with st.expander(f"{signal_emoji} **{result['name']}** ({result['symbol']}) | Signal: **{result['consensus']}** | Strength: **{result['strength']}%**", expanded=True):
             col1, col2, col3 = st.columns([2, 2, 3])
@@ -886,56 +886,56 @@ def main():
             with col1:
                 st.markdown(f"### ${result['price']:,.8f}")
                 signal_class = f"signal-{result['consensus'].lower()}"
-                st.markdown(f'<div class="{signal_class}">ðŸŽ¯ {result["consensus"]}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="{signal_class}">🎯 {result["consensus"]}</div>', unsafe_allow_html=True)
                 st.metric("Strength", f"{result['strength']}%")
             
             with col2:
-                st.markdown("**ðŸ“Š Multi-Timeframe:**")
+                st.markdown("**📊 Multi-Timeframe:**")
                 for tf in ['12h', '4h', '1h']:
                     tf_data = result['timeframes'].get(tf, {})
                     signal = tf_data.get('signal', 'N/A')
                     strength = tf_data.get('strength', 0)
-                    emoji = "ðŸŸ¢" if signal == "LONG" else "ðŸ”´" if signal == "SHORT" else "âšª"
+                    emoji = "🟢" if signal == "LONG" else "🔴" if signal == "SHORT" else "⚪"
                     st.markdown(f"{emoji} **{tf.upper()}:** {signal} ({strength:.1f}%)")
             
             with col3:
                 if result['trading_plan']:
                     plan = result['trading_plan']
-                    st.markdown("**ðŸ’¼ Trading Plan:**")
+                    st.markdown("**💼 Trading Plan:**")
                     if plan.get('entry_note'):
                         st.warning(plan['entry_note'])
-                    st.markdown(f"ðŸ“ **Entry:** ${plan['entry']:,.8f}")
+                    st.markdown(f"📍 **Entry:** ${plan['entry']:,.8f}")
                     if result['consensus'] == 'LONG' and plan.get('entry_to_support_pct'):
-                        st.markdown(f"   â†³ Distance to Support: {plan['entry_to_support_pct']:.2f}%")
+                        st.markdown(f"   ↳ Distance to Support: {plan['entry_to_support_pct']:.2f}%")
                     elif result['consensus'] == 'SHORT' and plan.get('entry_to_resistance_pct'):
-                        st.markdown(f"   â†³ Distance to Resistance: {plan['entry_to_resistance_pct']:.2f}%")
-                    st.markdown(f"ðŸŽ¯ **TP1:** ${plan['tp1']:,.8f} (R:R **{plan['risk_reward_tp1']}**) ~{plan['est_hours_to_tp1']:.0f}h")
-                    st.markdown(f"ðŸŽ¯ **TP2:** ${plan['tp2']:,.8f} (R:R **{plan['risk_reward_tp2']}**)")
-                    st.markdown(f"ðŸ›‘ **SL:** ${plan['sl']:,.8f} (Risk: {plan['risk_percentage']:.2f}%)")
+                        st.markdown(f"   ↳ Distance to Resistance: {plan['entry_to_resistance_pct']:.2f}%")
+                    st.markdown(f"🎯 **TP1:** ${plan['tp1']:,.8f} (R:R **{plan['risk_reward_tp1']}**) ~{plan['est_hours_to_tp1']:.0f}h")
+                    st.markdown(f"🎯 **TP2:** ${plan['tp2']:,.8f} (R:R **{plan['risk_reward_tp2']}**)")
+                    st.markdown(f"🛑 **SL:** ${plan['sl']:,.8f} (Risk: {plan['risk_percentage']:.2f}%)")
                     if plan['support'] and plan['resistance']:
                         st.markdown("---")
-                        st.markdown(f"ðŸ“‰ **Support:** ${plan['support']:,.8f}")
-                        st.markdown(f"ðŸ“ˆ **Resistance:** ${plan['resistance']:,.8f}")
+                        st.markdown(f"📉 **Support:** ${plan['support']:,.8f}")
+                        st.markdown(f"📈 **Resistance:** ${plan['resistance']:,.8f}")
                         current = result['price']
                         if result['consensus'] == 'LONG':
                             support_distance = (current - plan['support']) / plan['support'] * 100
                             if support_distance < 1:
-                                st.success("âœ… Price near support - Good entry zone")
+                                st.success("✅ Price near support - Good entry zone")
                             elif support_distance < 3:
-                                st.info("â„¹ï¸ Price close to support")
+                                st.info("ℹ️ Price close to support")
                             else:
-                                st.warning(f"âš ï¸ Price {support_distance:.1f}% above support")
+                                st.warning(f"⚠️ Price {support_distance:.1f}% above support")
                         else:
                             resistance_distance = (plan['resistance'] - current) / current * 100
                             if resistance_distance < 1:
-                                st.success("âœ… Price near resistance - Good entry zone")
+                                st.success("✅ Price near resistance - Good entry zone")
                             elif resistance_distance < 3:
-                                st.info("â„¹ï¸ Price close to resistance")
+                                st.info("ℹ️ Price close to resistance")
                             else:
-                                st.warning(f"âš ï¸ Price {resistance_distance:.1f}% below resistance")
+                                st.warning(f"⚠️ Price {resistance_distance:.1f}% below resistance")
             
             st.markdown("---")
-            st.markdown("**ðŸ“Š Technical Indicators:**")
+            st.markdown("**📊 Technical Indicators:**")
             cols = st.columns(3)
             for idx, tf in enumerate(['12h', '4h', '1h']):
                 tf_data = result['timeframes'].get(tf, {})
@@ -944,51 +944,51 @@ def main():
                 patterns = tf_data.get('patterns', [])
                 if tf_data.get('signal') not in ['ERROR', 'INSUFFICIENT_DATA']:
                     with cols[idx]:
-                        st.markdown(f"**â° {tf.upper()}**")
+                        st.markdown(f"**⏰ {tf.upper()}**")
                         rsi = indicators.get('rsi', 0)
-                        rsi_emoji = "ðŸŸ¢" if rsi < 30 else "ðŸ”´" if rsi > 70 else "ðŸŸ¡" if rsi < 40 else "ðŸŸ " if rsi > 60 else "âšª"
+                        rsi_emoji = "🟢" if rsi < 30 else "🔴" if rsi > 70 else "🟡" if rsi < 40 else "🟠" if rsi > 60 else "⚪"
                         st.markdown(f"{rsi_emoji} RSI: **{rsi:.1f}**")
                         stoch = indicators.get('stoch_rsi', 0)
-                        stoch_emoji = "ðŸŸ¢" if stoch < 20 else "ðŸ”´" if stoch > 80 else "âšª"
+                        stoch_emoji = "🟢" if stoch < 20 else "🔴" if stoch > 80 else "⚪"
                         st.markdown(f"{stoch_emoji} Stoch: **{stoch:.1f}**")
                         macd = indicators.get('macd_diff', 0)
-                        macd_emoji = "ðŸŸ¢" if macd > 0 else "ðŸ”´"
+                        macd_emoji = "🟢" if macd > 0 else "🔴"
                         st.markdown(f"{macd_emoji} MACD: **{macd:.8f}**")
                         vol = indicators.get('volume_ratio', 0)
-                        vol_emoji = "ðŸŸ¢" if vol > 1.5 else "ðŸŸ¡" if vol > 1.2 else "âšª"
+                        vol_emoji = "🟢" if vol > 1.5 else "🟡" if vol > 1.2 else "⚪"
                         st.markdown(f"{vol_emoji} Volume: **{vol:.2f}x**")
                         adx = indicators.get('adx', 0)
-                        adx_emoji = "ðŸ’ª" if adx > 25 else "âšª"
+                        adx_emoji = "💪" if adx > 25 else "⚪"
                         st.markdown(f"{adx_emoji} ADX: **{adx:.1f}**")
                         ema_trend = indicators.get('ema_trend', 'NEUTRAL')
-                        trend_emoji = "ðŸ“ˆ" if ema_trend == 'BULL' else "ðŸ“‰" if ema_trend == 'BEAR' else "âž¡ï¸"
+                        trend_emoji = "📈" if ema_trend == 'BULL' else "📉" if ema_trend == 'BEAR' else "➡️"
                         st.markdown(f"{trend_emoji} Trend: **{ema_trend}**")
                         if patterns:
-                            st.markdown("**ðŸŽ­ Patterns:**")
+                            st.markdown("**🎭 Patterns:**")
                             for pattern in patterns[:2]:
                                 if 'GOLDEN' in pattern:
-                                    st.markdown("â­ Golden Cross")
+                                    st.markdown("⭐ Golden Cross")
                                 elif 'DEATH' in pattern:
-                                    st.markdown("ðŸ’€ Death Cross")
+                                    st.markdown("💀 Death Cross")
                                 elif 'BULLISH' in pattern:
-                                    st.markdown("ðŸ“ˆ Bull Divergence")
+                                    st.markdown("📈 Bull Divergence")
                                 elif 'BEARISH' in pattern:
-                                    st.markdown("ðŸ“‰ Bear Divergence")
+                                    st.markdown("📉 Bear Divergence")
                         if reasons:
-                            st.markdown("**ðŸ’¡ Signals:**")
+                            st.markdown("**💡 Signals:**")
                             for reason in reasons[:3]:
-                                st.markdown(f"â€¢ {reason}")
+                                st.markdown(f"• {reason}")
             
             main_df = result['timeframes'].get('4h_df')
             if main_df is not None and len(main_df) >= 50:
                 st.markdown("---")
-                st.markdown("**ðŸ“ˆ Chart Analysis (4H)**")
+                st.markdown("**📈 Chart Analysis (4H)**")
                 chart = create_chart(main_df, result['name'], result['trading_plan'])
                 if chart:
                     st.plotly_chart(chart, use_container_width=True)
     
     st.markdown("---")
-    st.markdown("âš ï¸ **Disclaimer:** Educational purposes only. DYOR and manage risk.")
+    st.markdown("⚠️ **Disclaimer:** Educational purposes only. DYOR and manage risk.")
 
 if __name__ == "__main__":
     main()
