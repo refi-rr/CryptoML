@@ -1415,6 +1415,10 @@ def main():
             parallel_workers = st.slider("Parallel Workers", 1, 10, 5)
             st.info(f"⚡ Scanning with {parallel_workers} threads")
         
+        # Initialize source variable in session state if not exists
+        if 'current_exchange' not in st.session_state:
+            st.session_state.current_exchange = api_source
+        
         # Start scan
         if st.button("🎯 Start Scan", type="primary", use_container_width=True):
             scan_start_time = time.time()
@@ -1425,6 +1429,9 @@ def main():
             if not symbols:
                 st.error("❌ Failed to fetch data from all exchanges")
                 return
+            
+            # Store current exchange in session state
+            st.session_state.current_exchange = source if source else api_source
             
             if source != api_source:
                 st.warning(f"⚠️ {API_SOURCES[api_source]['name']} unavailable. Using {API_SOURCES[source]['name']}")
@@ -1503,6 +1510,9 @@ def main():
         if st.session_state.scan_results:
             results = st.session_state.scan_results
             
+            # Get current exchange from session state
+            current_exchange = st.session_state.get('current_exchange', 'binance')
+            
             st.markdown(f"### 📊 Found {len(results)} Trading Opportunities")
             
             # Market Heatmap
@@ -1563,21 +1573,24 @@ def main():
                                 st.markdown(f"📉 **Support:** ${plan['support']:,.8f}")
                                 st.markdown(f"📈 **Resistance:** ${plan['resistance']:,.8f}")
                             
-                            # Save to DB button
+                            # Save to DB button - Use current_exchange variable
                             if st.button(f"💾 Save to Portfolio", key=f"save_{result['symbol']}"):
-                                signal_id = save_signal_to_db(result, source)
+                                signal_id = save_signal_to_db(result, current_exchange)
                                 if signal_id:
                                     st.success(f"✅ Saved {result['symbol']} to portfolio!")
                                     
                                     # Send Telegram alert if enabled
                                     if st.session_state.telegram_enabled:
-                                        if send_telegram_alert(
-                                            st.session_state.telegram_token,
-                                            st.session_state.telegram_chat_id,
-                                            result['symbol'],
-                                            result
-                                        ):
-                                            st.success("📱 Telegram alert sent!")
+                                        telegram_token = st.session_state.get('telegram_token')
+                                        telegram_chat_id = st.session_state.get('telegram_chat_id')
+                                        if telegram_token and telegram_chat_id:
+                                            if send_telegram_alert(
+                                                telegram_token,
+                                                telegram_chat_id,
+                                                result['symbol'],
+                                                result
+                                            ):
+                                                st.success("📱 Telegram alert sent!")
                     
                     # Technical details
                     st.markdown("---")
