@@ -2,7 +2,7 @@
 Crypto Futures Scanner Pro - Ultimate Edition
 Enhanced with: Parallel Processing, Database, Alerts, Backtesting, Portfolio Tracking
 Author: AI Assistant
-Version: 2.0
+Version: 5.0
 """
 
 import streamlit as st
@@ -25,6 +25,7 @@ import futures_metrics_wrapper as fm
 import concurrent.futures
 import requests
 import streamlit.components.v1 as components
+from liquidation_wrappers import get_liquidation_data
 from datetime import datetime
 import pytz
 import json
@@ -2254,6 +2255,499 @@ def integrate_with_existing_scanner(symbol, df_price, base_timeframes_analysis, 
     
     return base_timeframes_analysis
 
+#=========================
+
+@st.cache_data(ttl=60)
+def get_coinglass_liquidations(symbol, timeframe='1h', limit=None):
+    """
+    Fetch liquidation data from Coinglass (Free API)
+    Best alternative for liquidation data
+    """
+    try:
+        # Remove USDT suffix
+        base_symbol = symbol.replace('USDT', '').replace('BUSD', '')
+        
+        url = "https://open-api.coinglass.com/public/v2/liquidation_history"
+        params = {
+            'symbol': base_symbol,
+            'time_type': timeframe,  # '1h', '4h', '12h', '24h'
+        }
+        
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('success') and data.get('data'):
+            liquidations = []
+            
+            for item in data['data']:
+                liquidations.append({
+                    'time': pd.to_datetime(item.get('createTime', 0), unit='ms'),
+                    'buy_vol': float(item.get('buyVolUsd', 0)),  # Short liquidations
+                    'sell_vol': float(item.get('sellVolUsd', 0)),  # Long liquidations
+                    'total_vol': float(item.get('volUsd', 0))
+                })
+            
+            df = pd.DataFrame(liquidations)
+            
+            # Add side labels for compatibility
+            df['side'] = df.apply(lambda x: 'BUY' if x['buy_vol'] > x['sell_vol'] else 'SELL', axis=1)
+            df['value_usd'] = df['total_vol']
+            df['side_label'] = df['side'].map({
+                'BUY': 'Short Liquidation',
+                'SELL': 'Long Liquidation'
+            })
+            
+            return df
+        
+        return None
+    
+    except Exception as e:
+        st.warning(f"Coinglass API error: {e}")
+        return None
+
+
+@st.cache_data(ttl=60)
+def get_coinglass_liquidation_heatmap(symbol):
+    """
+    Get liquidation heatmap from Coinglass
+    Shows liquidation levels and clustering
+    """
+    try:
+        base_symbol = symbol.replace('USDT', '')
+        
+        url = "https://open-api.coinglass.com/public/v2/liquidation_chart"
+        params = {
+            'symbol': base_symbol,
+            'time_type': '24h'
+        }
+        
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('success') and data.get('data'):
+            # Parse price levels and liquidation volumes
+            levels = []
+            for item in data['data']:
+                levels.append({
+                    'price': float(item.get('price', 0)),
+                    'liq_volume': float(item.get('volUsd', 0)),
+                    'side': item.get('side', 'unknown')
+                })
+            
+            return pd.DataFrame(levels)
+        
+        return None
+    
+    except Exception as e:
+        st.warning(f"Heatmap error: {e}")
+        return None
+
+# ==================== LONG/SHORT RATIO FUNCTIONS ====================
+
+@st.cache_data(ttl=60)
+def get_binance_long_short_ratio(symbol, period='5m', limit=100):
+    """
+    Fetch Long/Short Ratio from Binance
+    Shows market sentiment
+    """
+    try:
+        url = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
+        params = {
+            'symbol': symbol,
+            'period': period,
+            'limit': limit
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if not data:
+            return None
+        
+        df = pd.DataFrame(data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df['longShortRatio'] = df['longShortRatio'].astype(float)
+        df['longAccount'] = df['longAccount'].astype(float)
+        df['shortAccount'] = df['shortAccount'].astype(float)
+        
+        return df
+    
+    except Exception as e:
+        st.error(f"Error fetching Long/Short ratio: {e}")
+        return None
+
+@st.cache_data(ttl=60)
+def get_binance_taker_buysell_volume(symbol, period='5m', limit=100):
+    """
+    Fetch Taker Buy/Sell Volume Ratio
+    Shows actual trading activity
+    """
+    try:
+        url = "https://fapi.binance.com/futures/data/takerlongshortRatio"
+        params = {
+            'symbol': symbol,
+            'period': period,
+            'limit': limit
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if not data:
+            return None
+        
+        df = pd.DataFrame(data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df['buySellRatio'] = df['buySellRatio'].astype(float)
+        df['buyVol'] = df['buyVol'].astype(float)
+        df['sellVol'] = df['sellVol'].astype(float)
+        
+        return df
+    
+    except Exception as e:
+        st.error(f"Error fetching Taker volume: {e}")
+        return None
+
+# ==================== ORDER BOOK FUNCTIONS ====================
+
+@st.cache_data(ttl=30)
+def get_orderbook(symbol, exchange='binance', limit=1000):
+    """
+    Fetch order book with depth
+    """
+    try:
+        if exchange == 'binance':
+            url = "https://fapi.binance.com/fapi/v1/depth"
+            params = {
+                'symbol': symbol,
+                'limit': limit
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Parse bids and asks
+            bids = pd.DataFrame(data['bids'], columns=['price', 'quantity'])
+            asks = pd.DataFrame(data['asks'], columns=['price', 'quantity'])
+            
+            bids['price'] = bids['price'].astype(float)
+            bids['quantity'] = bids['quantity'].astype(float)
+            bids['total'] = bids['price'] * bids['quantity']
+            bids['side'] = 'BID'
+            
+            asks['price'] = asks['price'].astype(float)
+            asks['quantity'] = asks['quantity'].astype(float)
+            asks['total'] = asks['price'] * asks['quantity']
+            asks['side'] = 'ASK'
+            
+            return bids, asks
+        
+        elif exchange == 'bybit':
+            url = "https://api.bybit.com/v5/market/orderbook"
+            params = {
+                'category': 'linear',
+                'symbol': symbol,
+                'limit': limit
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('retCode') == 0:
+                result = data['result']
+                
+                bids = pd.DataFrame(result['b'], columns=['price', 'quantity'])
+                asks = pd.DataFrame(result['a'], columns=['price', 'quantity'])
+                
+                bids['price'] = bids['price'].astype(float)
+                bids['quantity'] = bids['quantity'].astype(float)
+                bids['total'] = bids['price'] * bids['quantity']
+                bids['side'] = 'BID'
+                
+                asks['price'] = asks['price'].astype(float)
+                asks['quantity'] = asks['quantity'].astype(float)
+                asks['total'] = asks['price'] * asks['quantity']
+                asks['side'] = 'ASK'
+                
+                return bids, asks
+        
+        return None, None
+    
+    except Exception as e:
+        st.error(f"Error fetching order book: {e}")
+        return None, None
+
+def analyze_whale_orders(bids, asks, threshold_percentile=95):
+    """
+    Identify whale orders (large orders)
+    """
+    if bids is None or asks is None:
+        return None, None
+    
+    # Calculate thresholds for whale orders
+    bid_threshold = bids['total'].quantile(threshold_percentile / 100)
+    ask_threshold = asks['total'].quantile(threshold_percentile / 100)
+    
+    whale_bids = bids[bids['total'] >= bid_threshold].copy()
+    whale_asks = asks[asks['total'] >= ask_threshold].copy()
+    
+    whale_bids['type'] = 'WHALE BID'
+    whale_asks['type'] = 'WHALE ASK'
+    
+    return whale_bids, whale_asks
+
+# ==================== VISUALIZATION FUNCTIONS ====================
+
+def create_liquidation_chart(df_liq):
+    """
+    Create liquidation visualization
+    """
+    if df_liq is None or len(df_liq) == 0:
+        return None
+    
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=('Liquidation Volume Over Time', 'Cumulative Liquidation'),
+        row_heights=[0.6, 0.4]
+    )
+    
+    # Separate long and short liquidations
+    long_liqs = df_liq[df_liq['side'] == 'SELL']  # SELL = Long Liquidation
+    short_liqs = df_liq[df_liq['side'] == 'BUY']   # BUY = Short Liquidation
+    
+    # Row 1: Bar chart of liquidations
+    fig.add_trace(
+        go.Bar(
+            x=long_liqs['time'],
+            y=long_liqs['value_usd'],
+            name='Long Liquidations',
+            marker_color='red',
+            opacity=0.7
+        ),
+        row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=short_liqs['time'],
+            y=short_liqs['value_usd'],
+            name='Short Liquidations',
+            marker_color='green',
+            opacity=0.7
+        ),
+        row=1, col=1
+    )
+    
+    # Row 2: Cumulative liquidations
+    df_cumulative = df_liq.sort_values('time').copy()
+    df_cumulative['long_cumsum'] = df_cumulative[df_cumulative['side'] == 'SELL']['value_usd'].cumsum()
+    df_cumulative['short_cumsum'] = df_cumulative[df_cumulative['side'] == 'BUY']['value_usd'].cumsum()
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_cumulative['time'],
+            y=df_cumulative['long_cumsum'],
+            name='Cumulative Longs',
+            line=dict(color='red', width=2),
+            fill='tozeroy'
+        ),
+        row=2, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_cumulative['time'],
+            y=df_cumulative['short_cumsum'],
+            name='Cumulative Shorts',
+            line=dict(color='green', width=2),
+            fill='tozeroy'
+        ),
+        row=2, col=1
+    )
+    
+    fig.update_layout(
+        height=600,
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text="USD Value", row=1, col=1)
+    fig.update_yaxes(title_text="Cumulative USD", row=2, col=1)
+    
+    return fig
+
+def create_long_short_chart(df_ratio, df_volume):
+    """
+    Create Long/Short ratio and volume chart
+    """
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=('Long/Short Account Ratio', 'Taker Buy/Sell Volume Ratio'),
+        row_heights=[0.5, 0.5]
+    )
+    
+    # Row 1: Long/Short Account Ratio
+    if df_ratio is not None and len(df_ratio) > 0:
+        fig.add_trace(
+            go.Scatter(
+                x=df_ratio['timestamp'],
+                y=df_ratio['longShortRatio'],
+                mode='lines+markers',
+                name='L/S Ratio',
+                line=dict(color='blue', width=2),
+                fill='tozeroy'
+            ),
+            row=1, col=1
+        )
+        
+        # Add reference line at 1.0
+        fig.add_hline(
+            y=1.0,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text="Neutral",
+            row=1, col=1
+        )
+    
+    # Row 2: Taker Buy/Sell Ratio
+    if df_volume is not None and len(df_volume) > 0:
+        fig.add_trace(
+            go.Scatter(
+                x=df_volume['timestamp'],
+                y=df_volume['buySellRatio'],
+                mode='lines+markers',
+                name='Buy/Sell Ratio',
+                line=dict(color='orange', width=2),
+                fill='tozeroy'
+            ),
+            row=2, col=1
+        )
+        
+        # Add reference line at 1.0
+        fig.add_hline(
+            y=1.0,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text="Neutral",
+            row=2, col=1
+        )
+    
+    fig.update_layout(
+        height=500,
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text="Ratio", row=1, col=1)
+    fig.update_yaxes(title_text="Ratio", row=2, col=1)
+    
+    return fig
+
+def create_orderbook_chart(bids, asks, whale_bids, whale_asks):
+    """
+    Create order book visualization with whale orders highlighted
+    """
+    if bids is None or asks is None:
+        return None
+    
+    fig = go.Figure()
+    
+    # Calculate cumulative sums
+    bids_sorted = bids.sort_values('price', ascending=False).copy()
+    asks_sorted = asks.sort_values('price', ascending=True).copy()
+    
+    bids_sorted['cumulative'] = bids_sorted['quantity'].cumsum()
+    asks_sorted['cumulative'] = asks_sorted['quantity'].cumsum()
+    
+    # Plot regular orders
+    fig.add_trace(
+        go.Scatter(
+            x=bids_sorted['price'],
+            y=bids_sorted['cumulative'],
+            name='Bids (Buy Orders)',
+            fill='tozeroy',
+            line=dict(color='green', width=2),
+            mode='lines'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=asks_sorted['price'],
+            y=asks_sorted['cumulative'],
+            name='Asks (Sell Orders)',
+            fill='tozeroy',
+            line=dict(color='red', width=2),
+            mode='lines'
+        )
+    )
+    
+    # Highlight whale orders
+    if whale_bids is not None and len(whale_bids) > 0:
+        fig.add_trace(
+            go.Scatter(
+                x=whale_bids['price'],
+                y=whale_bids['quantity'],
+                name='Whale Bids',
+                mode='markers',
+                marker=dict(
+                    size=15,
+                    color='darkgreen',
+                    symbol='diamond',
+                    line=dict(color='white', width=2)
+                )
+            )
+        )
+    
+    if whale_asks is not None and len(whale_asks) > 0:
+        fig.add_trace(
+            go.Scatter(
+                x=whale_asks['price'],
+                y=whale_asks['quantity'],
+                name='Whale Asks',
+                mode='markers',
+                marker=dict(
+                    size=15,
+                    color='darkred',
+                    symbol='diamond',
+                    line=dict(color='white', width=2)
+                )
+            )
+        )
+    
+    # Calculate spread
+    best_bid = bids['price'].max()
+    best_ask = asks['price'].min()
+    mid_price = (best_bid + best_ask) / 2
+    
+    fig.add_vline(
+        x=mid_price,
+        line_dash="dash",
+        line_color="yellow",
+        annotation_text=f"Mid: ${mid_price:,.2f}"
+    )
+    
+    fig.update_layout(
+        title='Order Book Depth with Whale Orders',
+        xaxis_title='Price (USD)',
+        yaxis_title='Cumulative Quantity',
+        height=500,
+        hovermode='x unified'
+    )
+    
+    return fig
 # ===== Enhanced Futures Analysis integrated =====
 
 def main():
@@ -3138,6 +3632,410 @@ def main():
                 if show_enhanced_debug:
                     st.exception(e)
 
+        st.header("📊 Advanced Market Analysis: Liquidation & Order Flow")
+        
+        # Symbol selection
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Get available symbols
+            available_symbols = []
+            if st.session_state.get("scan_results"):
+                available_symbols = sorted(set([r["symbol"] for r in st.session_state.scan_results]))
+            
+            if not available_symbols:
+                available_symbols = [
+                    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                    "ADAUSDT", "DOGEUSDT", "MATICUSDT", "DOTUSDT", "AVAXUSDT"
+                ]
+            
+            selected_symbol_liq = st.selectbox(
+                "Select Trading Pair",
+                available_symbols,
+                key="liq_symbol_select"
+            )
+        
+        with col2:
+            manual_symbol_liq = st.text_input(
+                "Or enter manually",
+                placeholder="BTCUSDT",
+                key="liq_manual_symbol"
+            )
+        
+        # Use manual input if provided
+        symbol_liq = (manual_symbol_liq.upper() if manual_symbol_liq else selected_symbol_liq)
+        
+        # Exchange selection
+        exchange_liq = st.selectbox(
+            "Exchange",
+            ["binance", "bybit", "coinglass"],
+            key="liq_exchange"
+        )
+        
+        # Analysis button
+        if st.button("🔍 Analyze Liquidation & Orders", type="primary", use_container_width=True):
+            
+            with st.spinner(f"Fetching data for {symbol_liq}..."):
+                
+                # Create tabs for different analyses
+                tab_liq, tab_ratio, tab_orderbook = st.tabs([
+                    "💥 Liquidations",
+                    "📊 Long/Short Ratio",
+                    "📖 Order Book & Whales"
+                ])
+                
+                # ===== TAB 1: LIQUIDATIONS =====
+                with tab_liq:
+                    st.subheader(f"💥 Liquidation Analysis - {symbol_liq}")
+                    
+                    # Fetch liquidation data
+                    df_liq = get_liquidation_data(symbol_liq, exchange="auto", debug=True)
+                    
+                    if df_liq is not None and len(df_liq) > 0:
+                        # Summary metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        total_liq = df_liq['value_usd'].sum()
+                        long_liq = df_liq[df_liq['side'] == 'SELL']['value_usd'].sum()
+                        short_liq = df_liq[df_liq['side'] == 'BUY']['value_usd'].sum()
+                        
+                        with col1:
+                            st.metric("Total Liquidations", f"${total_liq:,.0f}")
+                        
+                        with col2:
+                            st.metric("Long Liquidations", f"${long_liq:,.0f}", 
+                                     delta=f"{(long_liq/total_liq*100):.1f}%")
+                        
+                        with col3:
+                            st.metric("Short Liquidations", f"${short_liq:,.0f}",
+                                     delta=f"{(short_liq/total_liq*100):.1f}%")
+                        
+                        with col4:
+                            ratio = long_liq / short_liq if short_liq > 0 else 0
+                            st.metric("Long/Short Ratio", f"{ratio:.2f}")
+                        
+                        # Chart
+                        st.markdown("---")
+                        liq_chart = create_liquidation_chart(df_liq)
+                        if liq_chart:
+                            st.plotly_chart(liq_chart, use_container_width=True)
+                        
+                        # Recent liquidations table
+                        st.markdown("---")
+                        st.subheader("📋 Recent Liquidations")
+                        
+                        df_display = df_liq.sort_values('time', ascending=False).head(20).copy()
+                        df_display['time'] = df_display['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                        df_display = df_display[['time', 'side_label', 'price', 'executedQty', 'value_usd']]
+                        df_display.columns = ['Time', 'Type', 'Price', 'Quantity', 'Value (USD)']
+                        
+                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                        
+                        # Interpretation
+                        st.markdown("---")
+                        st.info(f"""
+                        ### 📖 Liquidation Analysis Interpretation:
+                        
+                        **Current Status:**
+                        - Long Liquidations: **${long_liq:,.0f}** ({(long_liq/total_liq*100):.1f}%)
+                        - Short Liquidations: **${short_liq:,.0f}** ({(short_liq/total_liq*100):.1f}%)
+                        
+                        **What This Means:**
+                        - 🔴 **High Long Liquidations**: Price dropped, longs got liquidated → Bearish pressure
+                        - 🟢 **High Short Liquidations**: Price pumped, shorts got liquidated → Bullish pressure
+                        - ⚖️ **Balanced Liquidations**: Market is ranging, no clear direction
+                        
+                        **Trading Tips:**
+                        - Watch for liquidation cascades (rapid increase)
+                        - High liquidations often mark local tops/bottoms
+                        - Use as confirmation with technical analysis
+                        """)
+                    
+                    else:
+                        st.warning("No liquidation data available for this symbol")
+                
+                # ===== TAB 2: LONG/SHORT RATIO =====
+                with tab_ratio:
+                    st.subheader(f"📊 Long/Short Ratio Analysis - {symbol_liq}")
+                    
+                    # Fetch ratio data
+                    df_ratio = get_binance_long_short_ratio(symbol_liq, period='5m', limit=100)
+                    df_volume = get_binance_taker_buysell_volume(symbol_liq, period='5m', limit=100)
+                    
+                    if df_ratio is not None or df_volume is not None:
+                        # Summary metrics
+                        col1, col2, col3 = st.columns(3)
+                        
+                        if df_ratio is not None and len(df_ratio) > 0:
+                            current_ratio = df_ratio['longShortRatio'].iloc[-1]
+                            long_pct = df_ratio['longAccount'].iloc[-1] * 100
+                            short_pct = df_ratio['shortAccount'].iloc[-1] * 100
+                            
+                            with col1:
+                                st.metric("L/S Account Ratio", f"{current_ratio:.2f}")
+                            
+                            with col2:
+                                st.metric("Long Accounts", f"{long_pct:.1f}%")
+                            
+                            with col3:
+                                st.metric("Short Accounts", f"{short_pct:.1f}%")
+                        
+                        # Chart
+                        st.markdown("---")
+                        ratio_chart = create_long_short_chart(df_ratio, df_volume)
+                        if ratio_chart:
+                            st.plotly_chart(ratio_chart, use_container_width=True)
+                        
+                        # Interpretation
+                        st.markdown("---")
+                        if df_ratio is not None and len(df_ratio) > 0:
+                            if current_ratio > 1.5:
+                                sentiment = "🟢 **EXTREMELY BULLISH**"
+                                warning = "⚠️ Warning: Overcrowded long positions may lead to long squeeze!"
+                            elif current_ratio > 1.1:
+                                sentiment = "🟢 **BULLISH**"
+                                warning = "ℹ️ More longs than shorts - bullish sentiment"
+                            elif current_ratio > 0.9:
+                                sentiment = "⚪ **NEUTRAL**"
+                                warning = "ℹ️ Balanced market - no clear bias"
+                            elif current_ratio > 0.7:
+                                sentiment = "🔴 **BEARISH**"
+                                warning = "ℹ️ More shorts than longs - bearish sentiment"
+                            else:
+                                sentiment = "🔴 **EXTREMELY BEARISH**"
+                                warning = "⚠️ Warning: Overcrowded short positions may lead to short squeeze!"
+                            
+                            st.info(f"""
+                            ### 📖 Long/Short Ratio Interpretation:
+                            
+                            **Current Sentiment:** {sentiment}
+                            
+                            **Ratio:** {current_ratio:.2f}
+                            - Ratio > 1: More long positions than shorts
+                            - Ratio < 1: More short positions than longs
+                            - Ratio = 1: Balanced market
+                            
+                            {warning}
+                            
+                            **Trading Tips:**
+                            - Extreme ratios (>2 or <0.5) often precede reversals
+                            - Use as contrarian indicator when combined with price action
+                            - Watch for divergences between ratio and price
+                            """)
+                    
+                    else:
+                        st.warning("Long/Short ratio data not available")
+                
+                # ===== TAB 3: ORDER BOOK & WHALES =====
+                with tab_orderbook:
+                    st.subheader(f"📖 Order Book Analysis - {symbol_liq}")
+                    
+                    # Fetch order book
+                    bids, asks = get_orderbook(symbol_liq, exchange=exchange_liq, limit=1000)
+                    
+                    if bids is not None and asks is not None:
+                        # Analyze whale orders
+                        whale_threshold = st.slider(
+                            "Whale Order Threshold (Percentile)",
+                            90, 99, 95,
+                            help="Orders above this percentile are considered 'whale orders'"
+                        )
+                        
+                        whale_bids, whale_asks = analyze_whale_orders(bids, asks, whale_threshold)
+                        
+                        # Summary metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        best_bid = bids['price'].max()
+                        best_ask = asks['price'].min()
+                        spread = best_ask - best_bid
+                        spread_pct = (spread / best_bid) * 100
+                        
+                        total_bid_value = bids['total'].sum()
+                        total_ask_value = asks['total'].sum()
+                        
+                        with col1:
+                            st.metric("Best Bid", f"${best_bid:,.2f}")
+                        
+                        with col2:
+                            st.metric("Best Ask", f"${best_ask:,.2f}")
+                        
+                        with col3:
+                            st.metric("Spread", f"${spread:.2f}", delta=f"{spread_pct:.3f}%")
+                        
+                        with col4:
+                            bid_ask_ratio = total_bid_value / total_ask_value if total_ask_value > 0 else 0
+                            st.metric("Bid/Ask Ratio", f"{bid_ask_ratio:.2f}")
+                        
+                        # Order book chart
+                        st.markdown("---")
+                        ob_chart = create_orderbook_chart(bids, asks, whale_bids, whale_asks)
+                        if ob_chart:
+                            st.plotly_chart(ob_chart, use_container_width=True)
+                        
+                        # Whale orders table
+                        st.markdown("---")
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader("🐋 Whale Bids (Buy Walls)")
+                            if whale_bids is not None and len(whale_bids) > 0:
+                                whale_bids_display = whale_bids.sort_values('total', ascending=False).head(10).copy()
+                                whale_bids_display = whale_bids_display[['price', 'quantity', 'total']]
+                                whale_bids_display.columns = ['Price', 'Quantity', 'Value (USD)']
+                                st.dataframe(whale_bids_display, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No whale bids detected at current threshold")
+                        
+                        with col2:
+                            st.subheader("🐋 Whale Asks (Sell Walls)")
+                            if whale_asks is not None and len(whale_asks) > 0:
+                                whale_asks_display = whale_asks.sort_values('total', ascending=False).head(10).copy()
+                                whale_asks_display = whale_asks_display[['price', 'quantity', 'total']]
+                                whale_asks_display.columns = ['Price', 'Quantity', 'Value (USD)']
+                                st.dataframe(whale_asks_display, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No whale asks detected at current threshold")
+                        
+                        # Order book statistics
+                        st.markdown("---")
+                        st.subheader("📊 Order Book Statistics")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("Total Bid Volume", f"{bids['quantity'].sum():,.2f}")
+                            st.metric("Total Bid Value", f"${total_bid_value:,.0f}")
+                            st.metric("Avg Bid Size", f"{bids['quantity'].mean():,.2f}")
+                        
+                        with col2:
+                            st.metric("Total Ask Volume", f"{asks['quantity'].sum():,.2f}")
+                            st.metric("Total Ask Value", f"${total_ask_value:,.0f}")
+                            st.metric("Avg Ask Size", f"{asks['quantity'].mean():,.2f}")
+                        
+                        with col3:
+                            if whale_bids is not None:
+                                st.metric("Whale Bids", len(whale_bids))
+                            if whale_asks is not None:
+                                st.metric("Whale Asks", len(whale_asks))
+                            st.metric("Bid/Ask Imbalance", f"{((total_bid_value - total_ask_value) / total_bid_value * 100):+.1f}%")
+                        
+                        # Interpretation
+                        st.markdown("---")
+                        st.info(f"""
+                        ### 📖 Order Book Interpretation:
+                        
+                        **Bid/Ask Ratio: {bid_ask_ratio:.2f}**
+                        - Ratio > 1.5: Strong buying pressure (bullish)
+                        - Ratio 0.8-1.2: Balanced market (neutral)
+                        - Ratio < 0.8: Strong selling pressure (bearish)
+                        
+                        **Whale Orders Detected:**
+                        - 🐋 Whale Bids: {len(whale_bids) if whale_bids is not None else 0} (Support levels)
+                        - 🐋 Whale Asks: {len(whale_asks) if whale_asks is not None else 0} (Resistance levels)
+                        
+                        **Trading Tips:**
+                        - Large bid walls can act as support (but may be fake/spoofed)
+                        - Large ask walls can act as resistance (but may be fake/spoofed)
+                        - Watch for sudden appearance/disappearance of whale orders
+                        - Spread < 0.1% = Very liquid market
+                        - Spread > 0.5% = Low liquidity, higher slippage risk
+                        
+                        **Current Spread: {spread_pct:.3f}%**
+                        """)
+                    
+                    else:
+                        st.warning("Order book data not available")
+        
+        # Help section
+        with st.expander("ℹ️ Understanding Liquidation & Order Analysis"):
+            st.markdown("""
+            ## 📚 Complete Guide
+            
+            ### 💥 Liquidations
+            **What are liquidations?**
+            - Forced closure of leveraged positions when margin is insufficient
+            - Long liquidation = Price drops → Longs forced to sell → More downward pressure
+            - Short liquidation = Price rises → Shorts forced to buy → More upward pressure
+            
+            **How to use:**
+            - High liquidations often mark local tops/bottoms
+            - Cascading liquidations create "liquidation wicks"
+            - Use as reversal signals when extreme
+            
+            ---
+            
+            ### 📊 Long/Short Ratio
+            **What is it?**
+            - Shows percentage of traders with long vs short positions
+            - Account Ratio: Number of accounts holding long vs short
+            - Volume Ratio: Actual trading volume of buys vs sells
+            
+            **How to interpret:**
+            - **Ratio > 2**: Overcrowded longs → Risk of long squeeze
+            - **Ratio < 0.5**: Overcrowded shorts → Risk of short squeeze
+            - **Ratio ≈ 1**: Balanced market
+            
+            **Trading strategy:**
+            - Use as contrarian indicator at extremes
+            - Combine with price action for confirmation
+            - Watch for divergences (price up but ratio down = bearish)
+            
+            ---
+            
+            ### 📖 Order Book & Whale Analysis
+            **What is order book?**
+            - Real-time list of all buy (bid) and sell (ask) orders
+            - Shows supply and demand at different price levels
+            - Depth shows cumulative volume
+            
+            **Whale orders:**
+            - Unusually large orders (top 5-10% by size)
+            - Can be support/resistance levels
+            - May be "spoofed" (fake orders to manipulate)
+            
+            **Key metrics:**
+            - **Bid/Ask Ratio**: Shows market bias
+            - **Spread**: Indicates liquidity
+            - **Order imbalance**: Predicts short-term direction
+            
+            **How to trade:**
+            1. Identify major support/resistance from whale orders
+            2. Watch for order book imbalances (more bids = bullish)
+            3. Be aware of order spoofing (orders that disappear)
+            4. Use tight stops near low liquidity areas
+            
+            ---
+            
+            ### 🎯 Combined Strategy
+            **Step 1**: Check liquidation data for recent activity
+            - High long liquidations + oversold RSI = Potential bounce
+            - High short liquidations + overbought RSI = Potential reversal
+            
+            **Step 2**: Analyze Long/Short ratio
+            - Extreme ratio + liquidations = Strong reversal signal
+            - Balanced ratio = Use other indicators
+            
+            **Step 3**: Check order book
+            - Strong bid support + bullish liquidations = Long entry
+            - Strong ask resistance + bearish liquidations = Short entry
+            
+            **Risk Management:**
+            - Always use stop losses
+            - Reduce leverage during high liquidation periods
+            - Be cautious of fake whale walls (spoofing)
+            - Never rely on single indicator alone
+            
+            ---
+            
+            ### ⚠️ Important Warnings
+            - **Liquidation cascades** can create extreme volatility
+            - **Whale orders** can be fake (spoofing)
+            - **Ratios** are lagging indicators
+            - **Always confirm** with technical analysis
+            - **Use proper risk management** at all times
+            """)
+        
     # ==================== TAB 6: REAL-TIME PRICE MONITOR ====================
     with tab6:
         st.header("📊 Real-Time Price Monitor")
