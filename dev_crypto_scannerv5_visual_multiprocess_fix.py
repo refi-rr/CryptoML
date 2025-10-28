@@ -22,7 +22,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import ProcessPoolExecutor
 import sqlite3
 import futures_metrics_wrapper as fm
-
+import concurrent.futures
+import requests
+import streamlit.components.v1 as components
+from datetime import datetime
+import pytz
 import json
 import warnings
 warnings.filterwarnings('ignore')
@@ -321,11 +325,11 @@ class RateLimiter:
         
         self.calls.append(now)
 
-rate_limiter = RateLimiter(max_calls=15, period=30)
+rate_limiter = RateLimiter(max_calls=15, period=40)
 
 # ==================== DATA FETCHING ====================
-@st.cache_data(ttl=300)
-def get_binance_top_symbols(limit=30):
+@st.cache_data(ttl=200)
+def get_binance_top_symbols(limit=40):
     """Fetch top trading pairs from Binance Futures"""
     try:
         rate_limiter.wait_if_needed()
@@ -339,8 +343,8 @@ def get_binance_top_symbols(limit=30):
     except Exception as e:
         return []
 
-@st.cache_data(ttl=300)
-def get_bybit_top_symbols(limit=30):
+@st.cache_data(ttl=200)
+def get_bybit_top_symbols(limit=40):
     """Fetch top trading pairs from Bybit"""
     try:
         rate_limiter.wait_if_needed()
@@ -358,8 +362,8 @@ def get_bybit_top_symbols(limit=30):
     except Exception as e:
         return []
 
-@st.cache_data(ttl=300)
-def get_gateio_top_symbols(limit=30):
+@st.cache_data(ttl=200)
+def get_gateio_top_symbols(limit=40):
     """Fetch top trading pairs from Gate.io"""
     try:
         rate_limiter.wait_if_needed()
@@ -373,7 +377,7 @@ def get_gateio_top_symbols(limit=30):
     except Exception as e:
         return []
 
-def get_top_symbols(source='binance', limit=30):
+def get_top_symbols(source='binance', limit=40):
     """Get top symbols with automatic fallback"""
     sources_priority = ['binance', 'bybit', 'gateio']
     if source in sources_priority:
@@ -396,8 +400,8 @@ def get_top_symbols(source='binance', limit=30):
             continue
     return None, []
 
-@st.cache_data(ttl=180)
-def get_binance_klines(symbol, interval, limit=500):
+@st.cache_data(ttl=150)
+def get_binance_klines(symbol, interval, limit=600):
     """Fetch klines from Binance Futures"""
     try:
         rate_limiter.wait_if_needed()
@@ -416,7 +420,7 @@ def get_binance_klines(symbol, interval, limit=500):
         return None
 
 @st.cache_data(ttl=180)
-def get_bybit_klines(symbol, interval, limit=500):
+def get_bybit_klines(symbol, interval, limit=600):
     """Fetch klines from Bybit"""
     try:
         rate_limiter.wait_if_needed()
@@ -438,7 +442,7 @@ def get_bybit_klines(symbol, interval, limit=500):
         return None
 
 @st.cache_data(ttl=180)
-def get_gateio_klines(symbol, interval, limit=500):
+def get_gateio_klines(symbol, interval, limit=600):
     """Fetch klines from Gate.io"""
     try:
         rate_limiter.wait_if_needed()
@@ -459,7 +463,7 @@ def get_gateio_klines(symbol, interval, limit=500):
     except Exception as e:
         return None
 
-def get_klines(source, symbol, timeframe, limit=500):
+def get_klines(source, symbol, timeframe, limit=600):
     """Get klines with automatic fallback"""
     sources_priority = ['binance', 'bybit', 'gateio']
     if source in sources_priority:
@@ -2276,7 +2280,7 @@ def main():
     st.markdown("---")
     
     # Create tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Scanner", "💼 Portfolio", "📈 Performance", "⚙️ Settings"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Scanner", "💼 Portfolio", "📈 Performance", "⚙️ Settings", "📊Single Analyzer", "📊 Live Price", "Sentiment Economic"])
     
     # ==================== TAB 1: SCANNER ====================
     with tab1:
@@ -2299,7 +2303,61 @@ def main():
                 ⚠️ Disclaimer: For educational purposes only. Always DYOR and manage risk properly.
 
             """
-        
+        def simple_trading_sessions():
+            """Versi sederhana trading session monitor"""
+            
+            st.header("🕒 Trading Sessions (WIB Time)")
+    
+            # Current time
+            wib = pytz.timezone('Asia/Jakarta')
+            current_time = datetime.now(wib)
+            current_hour = current_time.hour
+            
+            st.metric("Current Time (WIB)", current_time.strftime("%H:%M:%S"))
+            
+            # CORRECTED session times
+            sessions = [
+                {"name": "Sydney", "open": 5, "close": 14, "active": False},
+                {"name": "Tokyo", "open": 7, "close": 16, "active": False},  # CORRECTED ⚡
+                {"name": "London", "open": 14, "close": 23, "active": False},
+                {"name": "New York", "open": 19, "close": 4, "active": False}
+            ]
+            
+            # Check active sessions
+            for session in sessions:
+                if session['name'] == 'New York':  # Cross midnight
+                    session['active'] = current_hour >= session['open'] or current_hour < session['close']
+                else:  # Normal sessions
+                    session['active'] = session['open'] <= current_hour < session['close']
+            
+            # Display sessions
+            cols = st.columns(4)
+            for idx, session in enumerate(sessions):
+                with cols[idx]:
+                    if session['active']:
+                        st.success(f"🟢 {session['name']}")
+                        st.write(f"⏰ {session['open']:02d}:00-{session['close']:02d}:00")
+                        st.write("**ACTIVE**")
+                    else:
+                        st.error(f"🔴 {session['name']}")
+                        st.write(f"⏰ {session['open']:02d}:00-{session['close']:02d}:00")
+                        st.write("CLOSED")
+            
+            # Market status based on corrected times
+            st.markdown("---")
+            active_count = sum(1 for s in sessions if s['active'])
+            if active_count >= 2:
+                st.success("🚀 HIGH VOLATILITY - Multiple sessions active")
+            elif active_count == 1:
+                st.info("📈 MARKET OPEN - One session active")
+            else:
+                st.warning("💤 MARKETS CLOSED - No active sessions")
+
+        # Gunakan yang simple
+        simple_trading_sessions()
+
+        #=================================#
+
         st.header("⚙️ Scanner Settings") 
         st.subheader("🔡 Data Source")
         api_source = st.selectbox(
@@ -2819,7 +2877,848 @@ def main():
         
         ⚠️ **Disclaimer:** For educational purposes only. Always DYOR and manage risk properly.
         """)
+
+    def main():
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(['Scanner', 'Portfolio', 'Performance', 'Settings', 'Single Analyzer'])
     
+    # ================= TAB 5 Single Analyzer ==============================
+    with tab5:
+        st.header("🧩 Single Coin Analyzer (Fast Mode)")
+        st.caption("Analyze one specific coin instantly with the same logic as the scanner.")
+
+        exchange_single = st.selectbox("Select Exchange", ["binance", "bybit", "gateio"], index=0, key="single_exchange")
+
+        # Default symbols
+        default_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "MATICUSDT", "DOTUSDT", "AVAXUSDT"]
+        
+        # Get symbols from last scan if available
+        scan_symbols = []
+        if st.session_state.get("scan_results"):
+            scan_symbols = sorted(set([r["symbol"] for r in st.session_state.get("scan_results", [])]))
+        
+        all_symbols = scan_symbols if scan_symbols else default_symbols
+
+        # Symbol input with autocomplete
+        selected_symbol = st.selectbox(
+            "Select Coin",
+            all_symbols,
+            key="single_symbol_select"
+        )
+        
+        # Or manual input
+        manual_symbol = st.text_input("Or enter symbol manually (e.g., BTCUSDT)", key="manual_symbol_input")
+        
+        # Use manual input if provided
+        symbol_to_analyze = manual_symbol.upper() if manual_symbol else selected_symbol
+
+        if st.button("🔍 Analyze Coin", type="primary", use_container_width=True):
+            if not symbol_to_analyze:
+                st.warning("⚠️ Please select or enter a coin symbol first.")
+                st.stop()
+
+            try:
+                with st.spinner(f"Fetching {symbol_to_analyze} data from {exchange_single}..."):
+                    # --- Fetch current price ---
+                    current_price = 0
+                    symbol_data = None
+                    
+                    try:
+                        if exchange_single == "binance":
+                            # Get price
+                            resp = requests.get(
+                                f"https://api.binance.com/api/v3/ticker/price?symbol={symbol_to_analyze}", 
+                                timeout=5
+                            )
+                            resp.raise_for_status()
+                            current_price = float(resp.json().get("price", 0))
+                            
+                            # Create symbol_data in format expected by analyze_single_coin
+                            symbol_data = {
+                                'symbol': symbol_to_analyze,
+                                'lastPrice': str(current_price)
+                            }
+                            
+                        elif exchange_single == "bybit":
+                            resp = requests.get(
+                                f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol_to_analyze}", 
+                                timeout=5
+                            )
+                            resp.raise_for_status()
+                            data = resp.json()
+                            if data.get("retCode") == 0 and data.get("result", {}).get("list"):
+                                current_price = float(data["result"]["list"][0].get("lastPrice", 0))
+                                symbol_data = {
+                                    'symbol': symbol_to_analyze,
+                                    'lastPrice': str(current_price)
+                                }
+                        
+                        elif exchange_single == "gateio":
+                            contract = symbol_to_analyze.replace('USDT', '_USDT')
+                            resp = requests.get(
+                                f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{contract}",
+                                timeout=5
+                            )
+                            resp.raise_for_status()
+                            data = resp.json()
+                            current_price = float(data.get("last_price", 0))
+                            symbol_data = {
+                                'name': contract,
+                                'last_price': str(current_price)
+                            }
+                            
+                    except Exception as e:
+                        st.error(f"❌ Failed to fetch price from {exchange_single}: {e}")
+                        st.stop()
+                    
+                    if not symbol_data or current_price == 0:
+                        st.error(f"❌ Could not fetch data for {symbol_to_analyze} on {exchange_single}")
+                        st.stop()
+                    
+                    st.success(f"✅ Current Price: ${current_price:,.8f}")
+
+                # --- Run Analysis ---
+                with st.spinner(f"⚡ Running multi-timeframe analysis..."):
+                    # Use analyze_single_coin function
+                    analysis = analyze_single_coin(exchange_single, symbol_data)
+                    
+                    if not analysis:
+                        st.error("❌ Analysis failed. Please try again.")
+                        st.stop()
+
+                # --- Display Results ---
+                st.markdown("---")
+                st.subheader(f"📊 Analysis Results for {symbol_to_analyze}")
+                
+                # Main metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    consensus = analysis.get('consensus', 'NEUTRAL')
+                    signal_emoji = "🟢" if consensus == 'LONG' else "🔴" if consensus == 'SHORT' else "⚪"
+                    st.metric("Signal", f"{signal_emoji} {consensus}")
+                
+                with col2:
+                    strength = analysis.get('strength', 0)
+                    st.metric("Strength", f"{strength:.1f}%")
+                
+                with col3:
+                    st.metric("Price", f"${current_price:,.8f}")
+                
+                with col4:
+                    # Count confirming timeframes
+                    confirming_tfs = 0
+                    for tf in ['1h', '4h', '12h']:
+                        tf_signal = analysis.get('timeframes', {}).get(tf, {}).get('signal')
+                        if tf_signal == consensus:
+                            confirming_tfs += 1
+                    st.metric("TF Confirm", f"{confirming_tfs}/3")
+                
+                # Timeframe breakdown
+                st.markdown("---")
+                st.markdown("#### ⏱️ Multi-Timeframe Analysis")
+                
+                tf_cols = st.columns(3)
+                for idx, tf in enumerate(['12h', '4h', '1h']):
+                    tf_data = analysis.get('timeframes', {}).get(tf, {})
+                    
+                    with tf_cols[idx]:
+                        st.markdown(f"**{tf.upper()} Timeframe**")
+                        
+                        signal = tf_data.get('signal', 'N/A')
+                        strength = tf_data.get('strength', 0)
+                        
+                        emoji = "🟢" if signal == "LONG" else "🔴" if signal == "SHORT" else "⚪"
+                        st.markdown(f"{emoji} **{signal}** ({strength:.1f}%)")
+                        
+                        # Show top indicators
+                        indicators = tf_data.get('indicators', {})
+                        if indicators:
+                            st.caption("**Key Indicators:**")
+                            st.caption(f"RSI: {indicators.get('rsi', 0):.1f}")
+                            st.caption(f"Volume: {indicators.get('volume_ratio', 0):.2f}x")
+                            st.caption(f"ADX: {indicators.get('adx', 0):.1f}")
+                        
+                        # Show reasons
+                        reasons = tf_data.get('reasons', [])
+                        if reasons:
+                            st.caption("**Signals:**")
+                            for reason in reasons[:3]:
+                                st.caption(f"• {reason}")
+                
+                # Trading Plan
+                if analysis.get('trading_plan'):
+                    st.markdown("---")
+                    st.markdown("#### 💼 Trading Plan")
+                    
+                    plan = analysis['trading_plan']
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown(f"**📍 Entry:** ${plan['entry']:,.8f}")
+                        st.markdown(f"**🎯 TP1:** ${plan['tp1']:,.8f} (R:R {plan['risk_reward_tp1']})")
+                        st.markdown(f"**🎯 TP2:** ${plan['tp2']:,.8f} (R:R {plan['risk_reward_tp2']})")
+                        st.markdown(f"**🛑 Stop Loss:** ${plan['sl']:,.8f}")
+                    
+                    with col2:
+                        st.markdown(f"**⚡ Risk:** {plan['risk_percentage']:.2f}%")
+                        if plan.get('support'):
+                            st.markdown(f"**📉 Support:** ${plan['support']:,.8f}")
+                        if plan.get('resistance'):
+                            st.markdown(f"**📈 Resistance:** ${plan['resistance']:,.8f}")
+                        if plan.get('entry_note'):
+                            st.warning(plan['entry_note'])
+                
+                # Enhanced Analysis
+                st.markdown("---")
+                st.markdown("#### 🚀 Enhanced Futures Analysis")
+                
+                # Run enhanced analysis
+                main_df = analysis.get('timeframes', {}).get('4h_df')
+                if main_df is not None:
+                    with st.spinner("Running enhanced analysis..."):
+                        # Create base signal for enhanced analysis
+                        base_signal = {
+                            'signal': analysis.get('consensus', 'NEUTRAL'),
+                            'strength': analysis.get('strength', 0),
+                            'score': analysis.get('strength', 0) / 10,
+                            'max_score': 10,
+                            'reasons': []
+                        }
+                        
+                        # Add reasons from 4h timeframe
+                        tf_4h = analysis.get('timeframes', {}).get('4h', {})
+                        if tf_4h.get('reasons'):
+                            base_signal['reasons'].extend(tf_4h['reasons'][:3])
+                        
+                        # Run enhanced analysis
+                        enhanced = enhanced_futures_analysis(
+                            symbol_to_analyze, 
+                            main_df, 
+                            base_signal, 
+                            exchange_single,
+                            debug=show_enhanced_debug
+                        )
+                        
+                        # Display enhanced results
+                        if enhanced:
+                            display_enhanced_analysis(enhanced, symbol_to_analyze)
+                
+                # Chart
+                if main_df is not None and len(main_df) >= 50:
+                    st.markdown("---")
+                    st.markdown("#### 📈 Price Chart (4H)")
+                    chart = create_chart(main_df, symbol_to_analyze, analysis.get('trading_plan'))
+                    if chart:
+                        st.plotly_chart(chart, use_container_width=True)
+                
+                # Save to portfolio option
+                st.markdown("---")
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if st.button("💾 Save to Portfolio", use_container_width=True):
+                        signal_id = save_signal_to_db(analysis, exchange_single)
+                        if signal_id:
+                            st.success(f"✅ Saved {symbol_to_analyze} to portfolio!")
+                            
+                            # Send Telegram if enabled
+                            if st.session_state.telegram_enabled:
+                                telegram_token = st.session_state.get('telegram_token')
+                                telegram_chat_id = st.session_state.get('telegram_chat_id')
+                                if telegram_token and telegram_chat_id:
+                                    if send_telegram_alert(telegram_token, telegram_chat_id, symbol_to_analyze, analysis):
+                                        st.success("📱 Telegram alert sent!")
+
+            except requests.exceptions.Timeout:
+                st.error("⏱️ Request timeout. Please try again.")
+            except requests.exceptions.RequestException as e:
+                st.error(f"❌ Network error: {e}")
+            except Exception as e:
+                st.error(f"❌ Unexpected error: {e}")
+                if show_enhanced_debug:
+                    st.exception(e)
+
+    # ==================== TAB 6: REAL-TIME PRICE MONITOR ====================
+    with tab6:
+        st.header("📊 Real-Time Price Monitor")
+        st.caption("Monitor live cryptocurrency prices with auto-refresh capability")
+        
+        # Settings Section
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Exchange selection
+            monitor_exchange = st.selectbox(
+                "Select Exchange",
+                ["binance", "bybit", "gateio"],
+                format_func=lambda x: API_SOURCES[x]['name'],
+                key="monitor_exchange"
+            )
+        
+        with col2:
+            # Auto-refresh toggle
+            auto_refresh_enabled = st.checkbox("🔄 Auto Refresh", value=False, key="price_auto_refresh")
+            if auto_refresh_enabled:
+                refresh_interval = st.selectbox(
+                    "Refresh Interval",
+                    [5, 10, 30, 60],
+                    format_func=lambda x: f"{x} seconds",
+                    key="price_refresh_interval"
+                )
+        
+        st.markdown("---")
+        
+        # Symbol Selection Methods
+        tab_select, tab_manual = st.tabs(["📋 Select from List", "⌨️ Manual Entry"])
+        
+        with tab_select:
+            # Get available symbols from recent scan or defaults
+            available_symbols = []
+            if st.session_state.get("scan_results"):
+                available_symbols = sorted(set([r["symbol"] for r in st.session_state.scan_results]))
+            
+            if not available_symbols:
+                # Default popular symbols
+                available_symbols = [
+                    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                    "ADAUSDT", "DOGEUSDT", "MATICUSDT", "DOTUSDT", "AVAXUSDT",
+                    "LINKUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT", "ETCUSDT"
+                ]
+            
+            # Multi-select for monitoring multiple coins
+            selected_symbols = st.multiselect(
+                "Select Coins to Monitor",
+                available_symbols,
+                default=[available_symbols[0]] if available_symbols else [],
+                key="monitor_symbols_select"
+            )
+        
+        with tab_manual:
+            manual_symbols_input = st.text_area(
+                "Enter Symbol(s) - One per line",
+                placeholder="BTCUSDT\nETHUSDT\nBNBUSDT",
+                height=100,
+                key="manual_symbols_input"
+            )
+            
+            if manual_symbols_input:
+                manual_symbols = [s.strip().upper() for s in manual_symbols_input.split('\n') if s.strip()]
+                if manual_symbols:
+                    st.info(f"✅ {len(manual_symbols)} symbol(s) ready to monitor")
+                    if st.button("Use Manual Symbols", key="use_manual"):
+                        selected_symbols = manual_symbols
+                        st.success("Manual symbols loaded!")
+        
+        # Combine symbols
+        if 'selected_symbols' not in locals():
+            selected_symbols = []
+        
+        st.markdown("---")
+        
+        # Control Buttons
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            start_monitoring = st.button(
+                "🚀 Start Monitoring",
+                type="primary",
+                use_container_width=True,
+                key="start_monitor"
+            )
+        
+        with col2:
+            if st.button("🔄 Refresh Now", use_container_width=True, key="manual_refresh"):
+                st.session_state.force_refresh = True
+        
+        with col3:
+            if st.button("🗑️ Clear Data", use_container_width=True, key="clear_monitor"):
+                if 'price_data' in st.session_state:
+                    del st.session_state.price_data
+                st.success("Data cleared!")
+                st.rerun()
+        
+        # Initialize session state for price data
+        if 'price_data' not in st.session_state:
+            st.session_state.price_data = {}
+        if 'last_price_update' not in st.session_state:
+            st.session_state.last_price_update = datetime.now()
+        if 'force_refresh' not in st.session_state:
+            st.session_state.force_refresh = False
+        
+        # Function to fetch live prices
+        def fetch_live_prices(exchange, symbols):
+            """Fetch current prices for multiple symbols"""
+            prices = {}
+            
+            for symbol in symbols:
+                try:
+                    if exchange == "binance":
+                        url = f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbol={symbol}"
+                        response = requests.get(url, timeout=5)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        prices[symbol] = {
+                            'price': float(data.get('lastPrice', 0)),
+                            'change_24h': float(data.get('priceChangePercent', 0)),
+                            'high_24h': float(data.get('highPrice', 0)),
+                            'low_24h': float(data.get('lowPrice', 0)),
+                            'volume_24h': float(data.get('volume', 0)),
+                            'quote_volume': float(data.get('quoteVolume', 0)),
+                            'timestamp': datetime.now()
+                        }
+                    
+                    elif exchange == "bybit":
+                        url = f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol}"
+                        response = requests.get(url, timeout=5)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        if data.get('retCode') == 0 and data.get('result', {}).get('list'):
+                            ticker = data['result']['list'][0]
+                            prices[symbol] = {
+                                'price': float(ticker.get('lastPrice', 0)),
+                                'change_24h': float(ticker.get('price24hPcnt', 0)) * 100,
+                                'high_24h': float(ticker.get('highPrice24h', 0)),
+                                'low_24h': float(ticker.get('lowPrice24h', 0)),
+                                'volume_24h': float(ticker.get('volume24h', 0)),
+                                'quote_volume': float(ticker.get('turnover24h', 0)),
+                                'timestamp': datetime.now()
+                            }
+                    
+                    elif exchange == "gateio":
+                        contract = symbol.replace('USDT', '_USDT')
+                        url = f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{contract}"
+                        response = requests.get(url, timeout=5)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        prices[symbol] = {
+                            'price': float(data.get('last_price', 0)),
+                            'change_24h': 0,  # Gate.io doesn't provide 24h change in this endpoint
+                            'high_24h': 0,
+                            'low_24h': 0,
+                            'volume_24h': 0,
+                            'quote_volume': 0,
+                            'timestamp': datetime.now()
+                        }
+                    
+                    time.sleep(0.1)  # Rate limiting
+                    
+                except Exception as e:
+                    st.warning(f"Failed to fetch {symbol}: {e}")
+                    prices[symbol] = None
+            
+            return prices
+        
+        # Monitoring Logic
+        if start_monitoring or st.session_state.force_refresh:
+            st.session_state.force_refresh = False
+            
+            if not selected_symbols:
+                st.warning("⚠️ Please select at least one symbol to monitor")
+            else:
+                with st.spinner(f"Fetching live prices from {API_SOURCES[monitor_exchange]['name']}..."):
+                    current_prices = fetch_live_prices(monitor_exchange, selected_symbols)
+                    
+                    # Update session state
+                    for symbol, data in current_prices.items():
+                        if data:
+                            if symbol not in st.session_state.price_data:
+                                st.session_state.price_data[symbol] = []
+                            
+                            st.session_state.price_data[symbol].append(data)
+                            
+                            # Keep only last 100 data points
+                            if len(st.session_state.price_data[symbol]) > 100:
+                                st.session_state.price_data[symbol] = st.session_state.price_data[symbol][-100:]
+                    
+                    st.session_state.last_price_update = datetime.now()
+        
+        # Display Price Data
+        if st.session_state.price_data:
+            st.markdown("---")
+            st.subheader("💰 Current Prices")
+            
+            # Last update time
+            time_since_update = (datetime.now() - st.session_state.last_price_update).total_seconds()
+            st.caption(f"Last updated: {st.session_state.last_price_update.strftime('%H:%M:%S')} ({time_since_update:.0f}s ago)")
+            
+            # Create metrics grid
+            cols_per_row = 3
+            symbols_to_display = list(st.session_state.price_data.keys())
+            
+            for i in range(0, len(symbols_to_display), cols_per_row):
+                cols = st.columns(cols_per_row)
+                
+                for j, col in enumerate(cols):
+                    if i + j < len(symbols_to_display):
+                        symbol = symbols_to_display[i + j]
+                        data_list = st.session_state.price_data[symbol]
+                        
+                        if data_list and data_list[-1]:
+                            latest = data_list[-1]
+                            
+                            with col:
+                                # Price change indicator
+                                change_24h = latest.get('change_24h', 0)
+                                change_emoji = "🟢" if change_24h >= 0 else "🔴"
+                                
+                                st.metric(
+                                    label=f"{change_emoji} {symbol}",
+                                    value=f"${latest['price']:,.8f}",
+                                    delta=f"{change_24h:+.2f}%"
+                                )
+                                
+                                # Additional info in expander
+                                with st.expander("📊 Details"):
+                                    st.write(f"**24h High:** ${latest.get('high_24h', 0):,.8f}")
+                                    st.write(f"**24h Low:** ${latest.get('low_24h', 0):,.8f}")
+                                    st.write(f"**24h Volume:** {latest.get('volume_24h', 0):,.2f}")
+                                    st.write(f"**Quote Volume:** ${latest.get('quote_volume', 0):,.2f}")
+            
+            # Price Charts
+            st.markdown("---")
+            st.subheader("📈 Price History")
+            
+            for symbol in symbols_to_display:
+                data_list = st.session_state.price_data[symbol]
+                
+                if data_list and len(data_list) > 1:
+                    with st.expander(f"📊 {symbol} Price Chart", expanded=False):
+                        # Prepare data for chart
+                        df_history = pd.DataFrame(data_list)
+                        
+                        # Create price line chart
+                        fig = go.Figure()
+                        
+                        fig.add_trace(go.Scatter(
+                            x=df_history['timestamp'],
+                            y=df_history['price'],
+                            mode='lines+markers',
+                            name='Price',
+                            line=dict(color='#1f77b4', width=2),
+                            marker=dict(size=6)
+                        ))
+                        
+                        # Add 24h high/low reference lines
+                        if df_history['high_24h'].iloc[-1] > 0:
+                            fig.add_hline(
+                                y=df_history['high_24h'].iloc[-1],
+                                line_dash="dash",
+                                line_color="green",
+                                annotation_text="24h High"
+                            )
+                        
+                        if df_history['low_24h'].iloc[-1] > 0:
+                            fig.add_hline(
+                                y=df_history['low_24h'].iloc[-1],
+                                line_dash="dash",
+                                line_color="red",
+                                annotation_text="24h Low"
+                            )
+                        
+                        fig.update_layout(
+                            title=f"{symbol} Price Movement",
+                            xaxis_title="Time",
+                            yaxis_title="Price (USD)",
+                            hovermode='x unified',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Statistics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            min_price = df_history['price'].min()
+                            st.metric("Min Price", f"${min_price:,.8f}")
+                        
+                        with col2:
+                            max_price = df_history['price'].max()
+                            st.metric("Max Price", f"${max_price:,.8f}")
+                        
+                        with col3:
+                            avg_price = df_history['price'].mean()
+                            st.metric("Avg Price", f"${avg_price:,.8f}")
+                        
+                        with col4:
+                            price_range = ((max_price - min_price) / min_price) * 100
+                            st.metric("Range", f"{price_range:.2f}%")
+            
+            # Export Options
+            st.markdown("---")
+            st.subheader("💾 Export Data")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📥 Download CSV", use_container_width=True):
+                    # Combine all symbol data
+                    all_data = []
+                    for symbol, data_list in st.session_state.price_data.items():
+                        for data in data_list:
+                            if data:
+                                all_data.append({
+                                    'symbol': symbol,
+                                    'timestamp': data['timestamp'],
+                                    'price': data['price'],
+                                    'change_24h': data['change_24h'],
+                                    'high_24h': data['high_24h'],
+                                    'low_24h': data['low_24h'],
+                                    'volume_24h': data['volume_24h']
+                                })
+                    
+                    df_export = pd.DataFrame(all_data)
+                    csv = df_export.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="💾 Download CSV File",
+                        data=csv,
+                        file_name=f"price_monitor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+            
+            with col2:
+                if st.button("📊 Generate Report", use_container_width=True):
+                    st.info("📄 Generating summary report...")
+                    
+                    # Create summary statistics
+                    summary_data = []
+                    for symbol, data_list in st.session_state.price_data.items():
+                        if data_list:
+                            prices = [d['price'] for d in data_list if d]
+                            latest = data_list[-1]
+                            
+                            summary_data.append({
+                                'Symbol': symbol,
+                                'Current Price': f"${latest['price']:,.8f}",
+                                '24h Change': f"{latest['change_24h']:+.2f}%",
+                                'Data Points': len(data_list),
+                                'Min Price': f"${min(prices):,.8f}",
+                                'Max Price': f"${max(prices):,.8f}",
+                                'Avg Price': f"${np.mean(prices):,.8f}"
+                            })
+                    
+                    df_summary = pd.DataFrame(summary_data)
+                    st.dataframe(df_summary, use_container_width=True, hide_index=True)
+        
+        else:
+            st.info("👆 Click 'Start Monitoring' to begin tracking prices")
+        
+        # Auto-refresh mechanism
+        if auto_refresh_enabled and st.session_state.price_data:
+            time.sleep(refresh_interval)
+            st.session_state.force_refresh = True
+            st.rerun()
+        
+        # Help Section
+        with st.expander("❓ How to Use Real-Time Monitor"):
+            st.markdown("""
+            ### 📖 Usage Guide:
+            
+            **1. Select Symbols:**
+            - Choose from dropdown list (recent scans)
+            - Or enter symbols manually (one per line)
+            
+            **2. Start Monitoring:**
+            - Click "Start Monitoring" to fetch initial prices
+            - Enable "Auto Refresh" for continuous updates
+            
+            **3. View Data:**
+            - Live price cards with 24h change
+            - Expandable charts showing price history
+            - Statistics and analytics
+            
+            **4. Export:**
+            - Download CSV for external analysis
+            - Generate summary report
+            
+            **Tips:**
+            - Auto-refresh updates every N seconds automatically
+            - Data is stored in session (max 100 data points per symbol)
+            - Use manual refresh for on-demand updates
+            - Clear data to reset and start fresh
+            
+            **Supported Exchanges:**
+            - Binance Futures (most data available)
+            - Bybit
+            - Gate.io
+            """)
+
+    with tab7:
+        st.header("📅 Important News Sentiment - Investing.com")
+        
+        # HTML code untuk economic calendar
+        calendar_html = """
+        <div style="background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <iframe 
+                src="https://sslecal2.investing.com?columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&category=_employment,_economicActivity,_inflation,_credit,_centralBanks,_confidenceIndex,_balance,_Bonds&features=datepicker,timezone&countries=5&calType=week&timeZone=27&lang=1" 
+                width="100%" 
+                height="800" 
+                frameborder="0" 
+                allowtransparency="true" 
+                marginwidth="0" 
+                marginheight="0">
+            </iframe>
+            <div class="poweredBy" style="font-family: Arial, Helvetica, sans-serif; margin-top: 10px;">
+                <span style="font-size: 11px;color: #333333;text-decoration: none;">
+                    Real Time Economic Calendar provided by 
+                    <a href="https://www.investing.com/" rel="nofollow" target="_blank" style="font-size: 11px;color: #06529D; font-weight: bold;" class="underline_link">Investing.com</a>.
+                </span>
+            </div>
+        </div>
+        """
+        
+        # Tampilkan HTML di Streamlit
+        st.components.v1.html(calendar_html, height=800)
+        
+        # Tambahan informasi
+        with st.expander("ℹ️ Cara Membaca Economic Calendar"):
+            st.markdown("""
+            **Keterangan Kolom:**
+            - **🔴 High Impact**: Event dengan dampak tinggi terhadap pasar
+            - **🟡 Medium Impact**: Event dengan dampak sedang  
+            - **🟢 Low Impact**: Event dengan dampak rendah
+            
+            **Kategori Event:**
+            - **Employment**: Data ketenagakerjaan (NFP, Unemployment Rate)
+            - **Inflation**: Data inflasi (CPI, PPI)
+            - **Central Banks**: Keputusan bank sentral (Fed, ECB, dll)
+            - **GDP**: Pertumbuhan ekonomi
+            - **Retail Sales**: Penjualan ritel
+            
+            **Tips Trading:**
+            - Hindari trading 15 menit sebelum/sesudah high impact news
+            - Perhatikan actual vs forecast
+            - Siapkan risk management yang ketat
+            """)
+        st.header("📅 Important News Sentiment - Financial Juice")
+
+        financial_juice_html = """
+        <div style="background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <iframe 
+                src="https://www.financialjuice.com/home" 
+                width="100%" 
+                height="800" 
+                frameborder="0" 
+                allowtransparency="true" 
+                marginwidth="0" 
+                marginheight="0">
+            </iframe>
+        </div>
+        """
+    
+    st.components.v1.html(financial_juice_html, height=800)
+
+    st.header("🗽 Truth Social - @realDonaldTrump")
+    
+    js_code = """
+    <script>
+    function openTruthSocial() {
+        window.open('https://truthsocial.com/@realDonaldTrump', '_blank', 
+                   'width=1200,height=800,scrollbars=yes');
+        return false;
+    }
+    
+    function copyToClipboard() {
+        navigator.clipboard.writeText('https://truthsocial.com/@realDonaldTrump');
+        alert('Profile link copied to clipboard!');
+    }
+    </script>
+    
+    <style>
+    .truth-card {
+        background: white;
+        border-radius: 15px;
+        padding: 30px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        text-align: center;
+        margin: 20px 0;
+    }
+    .truth-btn {
+        background: linear-gradient(45deg, #FF6B6B, #FF8E53);
+        color: white;
+        border: none;
+        padding: 15px 30px;
+        border-radius: 25px;
+        font-size: 18px;
+        cursor: pointer;
+        margin: 10px;
+        transition: all 0.3s ease;
+    }
+    .truth-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(255,107,107,0.4);
+    }
+    .profile-stats {
+        display: flex;
+        justify-content: space-around;
+        margin: 20px 0;
+    }
+    .stat-item {
+        text-align: center;
+    }
+    </style>
+    
+    <div class="truth-card">
+        <h2>Donald J. Trump</h2>
+        <p style="color: #666; margin-bottom: 30px;">@realDonaldTrump on Truth Social</p>
+        
+        <div class="profile-stats">
+            <div class="stat-item">
+                <h3>5.2M+</h3>
+                <p>Followers</p>
+            </div>
+            <div class="stat-item">
+                <h3>3.4K+</h3>
+                <p>Posts</p>
+            </div>
+            <div class="stat-item">
+                <h3>2022</h3>
+                <p>Joined</p>
+            </div>
+        </div>
+        
+        <button class="truth-btn" onclick="openTruthSocial()">
+            🗽 Open Truth Social Profile
+        </button>
+        
+        <button class="truth-btn" onclick="copyToClipboard()" 
+                style="background: linear-gradient(45deg, #667eea, #764ba2);">
+            📋 Copy Profile Link
+        </button>
+        
+        <div style="margin-top: 20px; color: #888;">
+            <small>Truth Social doesn't allow direct embedding for security reasons</small>
+        </div>
+    </div>
+    """
+    
+    components.html(js_code, height=800)
+    
+    # Additional information
+    with st.expander("ℹ️ Why can't I embed Truth Social?"):
+        st.markdown("""
+        **Platform Security Restrictions:**
+        
+        Truth Social, like many modern social media platforms, implements:
+        
+        - **X-Frame-Options**: Prevents embedding in iframes
+        - **Content Security Policy (CSP)**: Restricts cross-origin requests
+        - **Clickjacking Protection**: Protects user interactions
+        - **Authentication Requirements**: May require logged-in sessions
+        
+        **Best Alternatives:**
+        1. Direct links (as shown above)
+        2. Official mobile apps
+        3. Browser extensions (if available)
+        4. Official API access (if provided)
+        """)
+
+
+
     # Footer
     st.markdown("---")
     st.markdown(
@@ -2879,8 +3778,7 @@ def create_market_heatmap_safe(results):
         except:
             return None
 
-
-
+    
 def plot_funding_chart(funding_raw, symbol):
     # funding_raw expected list-of-dicts with keys 'fundingTime' (ms) and 'fundingRate'
     try:
