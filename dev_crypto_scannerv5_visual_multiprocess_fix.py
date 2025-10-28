@@ -2303,55 +2303,55 @@ def main():
                 ⚠️ Disclaimer: For educational purposes only. Always DYOR and manage risk properly.
 
             """
-        def simple_trading_sessions():
-            """Versi sederhana trading session monitor"""
-            
-            st.header("🕒 Trading Sessions (WIB Time)")
-    
-            # Current time
-            wib = pytz.timezone('Asia/Jakarta')
-            current_time = datetime.now(wib)
-            current_hour = current_time.hour
-            
-            st.metric("Current Time (WIB)", current_time.strftime("%H:%M:%S"))
-            
-            # CORRECTED session times
-            sessions = [
-                {"name": "Sydney", "open": 5, "close": 14, "active": False},
-                {"name": "Tokyo", "open": 7, "close": 16, "active": False},  # CORRECTED ⚡
-                {"name": "London", "open": 14, "close": 23, "active": False},
-                {"name": "New York", "open": 19, "close": 4, "active": False}
-            ]
-            
-            # Check active sessions
-            for session in sessions:
-                if session['name'] == 'New York':  # Cross midnight
-                    session['active'] = current_hour >= session['open'] or current_hour < session['close']
-                else:  # Normal sessions
-                    session['active'] = session['open'] <= current_hour < session['close']
-            
-            # Display sessions
-            cols = st.columns(4)
-            for idx, session in enumerate(sessions):
-                with cols[idx]:
-                    if session['active']:
-                        st.success(f"🟢 {session['name']}")
-                        st.write(f"⏰ {session['open']:02d}:00-{session['close']:02d}:00")
-                        st.write("**ACTIVE**")
-                    else:
-                        st.error(f"🔴 {session['name']}")
-                        st.write(f"⏰ {session['open']:02d}:00-{session['close']:02d}:00")
-                        st.write("CLOSED")
-            
-            # Market status based on corrected times
-            st.markdown("---")
-            active_count = sum(1 for s in sessions if s['active'])
-            if active_count >= 2:
-                st.success("🚀 HIGH VOLATILITY - Multiple sessions active")
-            elif active_count == 1:
-                st.info("📈 MARKET OPEN - One session active")
-            else:
-                st.warning("💤 MARKETS CLOSED - No active sessions")
+            def simple_trading_sessions():
+                """Versi sederhana trading session monitor"""
+                
+                st.header("🕒 Trading Sessions (WIB Time)")
+        
+                # Current time
+                wib = pytz.timezone('Asia/Jakarta')
+                current_time = datetime.now(wib)
+                current_hour = current_time.hour
+                
+                st.metric("Current Time (WIB)", current_time.strftime("%H:%M:%S"))
+                
+                # CORRECTED session times
+                sessions = [
+                    {"name": "Sydney", "open": 5, "close": 14, "active": False},
+                    {"name": "Tokyo", "open": 7, "close": 16, "active": False},  # CORRECTED ⚡
+                    {"name": "London", "open": 14, "close": 23, "active": False},
+                    {"name": "New York", "open": 19, "close": 4, "active": False}
+                ]
+                
+                # Check active sessions
+                for session in sessions:
+                    if session['name'] == 'New York':  # Cross midnight
+                        session['active'] = current_hour >= session['open'] or current_hour < session['close']
+                    else:  # Normal sessions
+                        session['active'] = session['open'] <= current_hour < session['close']
+                
+                # Display sessions
+                cols = st.columns(4)
+                for idx, session in enumerate(sessions):
+                    with cols[idx]:
+                        if session['active']:
+                            st.success(f"🟢 {session['name']}")
+                            st.write(f"⏰ {session['open']:02d}:00-{session['close']:02d}:00")
+                            st.write("**ACTIVE**")
+                        else:
+                            st.error(f"🔴 {session['name']}")
+                            st.write(f"⏰ {session['open']:02d}:00-{session['close']:02d}:00")
+                            st.write("CLOSED")
+                
+                # Market status based on corrected times
+                st.markdown("---")
+                active_count = sum(1 for s in sessions if s['active'])
+                if active_count >= 2:
+                    st.success("🚀 HIGH VOLATILITY - Multiple sessions active")
+                elif active_count == 1:
+                    st.info("📈 MARKET OPEN - One session active")
+                else:
+                    st.warning("💤 MARKETS CLOSED - No active sessions")
 
         # Gunakan yang simple
         simple_trading_sessions()
@@ -3610,112 +3610,112 @@ def main():
         </div>
         """
     
-    st.components.v1.html(financial_juice_html, height=800)
+        st.components.v1.html(financial_juice_html, height=800)
 
-    st.header("🗽 Truth Social - @realDonaldTrump")
-    
-    js_code = """
-    <script>
-    function openTruthSocial() {
-        window.open('https://truthsocial.com/@realDonaldTrump', '_blank', 
-                   'width=1200,height=800,scrollbars=yes');
-        return false;
-    }
-    
-    function copyToClipboard() {
-        navigator.clipboard.writeText('https://truthsocial.com/@realDonaldTrump');
-        alert('Profile link copied to clipboard!');
-    }
-    </script>
-    
-    <style>
-    .truth-card {
-        background: white;
-        border-radius: 15px;
-        padding: 30px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        text-align: center;
-        margin: 20px 0;
-    }
-    .truth-btn {
-        background: linear-gradient(45deg, #FF6B6B, #FF8E53);
-        color: white;
-        border: none;
-        padding: 15px 30px;
-        border-radius: 25px;
-        font-size: 18px;
-        cursor: pointer;
-        margin: 10px;
-        transition: all 0.3s ease;
-    }
-    .truth-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(255,107,107,0.4);
-    }
-    .profile-stats {
-        display: flex;
-        justify-content: space-around;
-        margin: 20px 0;
-    }
-    .stat-item {
-        text-align: center;
-    }
-    </style>
-    
-    <div class="truth-card">
-        <h2>Donald J. Trump</h2>
-        <p style="color: #666; margin-bottom: 30px;">@realDonaldTrump on Truth Social</p>
+        st.header("🗽 Truth Social - @realDonaldTrump")
         
-        <div class="profile-stats">
-            <div class="stat-item">
-                <h3>5.2M+</h3>
-                <p>Followers</p>
+        js_code = """
+        <script>
+        function openTruthSocial() {
+            window.open('https://truthsocial.com/@realDonaldTrump', '_blank', 
+                    'width=1200,height=800,scrollbars=yes');
+            return false;
+        }
+        
+        function copyToClipboard() {
+            navigator.clipboard.writeText('https://truthsocial.com/@realDonaldTrump');
+            alert('Profi'Profilek copied to clipboard!');
+        }
+        </script>
+        
+        <style>
+        .truth-card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            margin: 20px 0;
+        }
+        .truth-btn {
+            background: linear-gradient(45deg, #FF6B6B, #FF8E53);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-size: 18px;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.3s ease;
+        }
+        .truth-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255,107,107,0.4);
+        }
+        .profile-stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        </style>
+        
+        <div class="truth-card">
+            <h2>Donald J. Trump</h2>
+            <p style="color: #666; margin-bottom: 30px;">@realDonaldTrump on Truth Social</p>
+            
+            <div class="profile-stats">
+                <div class="stat-item">
+                    <h3>5.2M+</h3>
+                    <p>Followers</p>
+                </div>
+                <div class="stat-item">
+                    <h3>3.4K+</h3>
+                    <p>Posts</p>
+                </div>
+                <div class="stat-item">
+                    <h3>2022</h3>
+                    <p>Joined</p>
+                </div>
             </div>
-            <div class="stat-item">
-                <h3>3.4K+</h3>
-                <p>Posts</p>
-            </div>
-            <div class="stat-item">
-                <h3>2022</h3>
-                <p>Joined</p>
+            
+            <button class="truth-btn" onclick="openTruthSocial()">
+                🗽 Open Truth Social Profile
+            </button>
+            
+            <button class="truth-btn" onclick="copyToClipboard()" 
+                    style="background: linear-gradient(45deg, #667eea, #764ba2);">
+                📋 Copy Profile Link
+            </button>
+            
+            <div style="margin-top: 20px; color: #888;">
+                <small>Truth Social doesn't allow direct embedding for security reasons</small>
             </div>
         </div>
+        """
         
-        <button class="truth-btn" onclick="openTruthSocial()">
-            🗽 Open Truth Social Profile
-        </button>
+        components.html(js_code, height=800)
         
-        <button class="truth-btn" onclick="copyToClipboard()" 
-                style="background: linear-gradient(45deg, #667eea, #764ba2);">
-            📋 Copy Profile Link
-        </button>
-        
-        <div style="margin-top: 20px; color: #888;">
-            <small>Truth Social doesn't allow direct embedding for security reasons</small>
-        </div>
-    </div>
-    """
-    
-    components.html(js_code, height=800)
-    
-    # Additional information
-    with st.expander("ℹ️ Why can't I embed Truth Social?"):
-        st.markdown("""
-        **Platform Security Restrictions:**
-        
-        Truth Social, like many modern social media platforms, implements:
-        
-        - **X-Frame-Options**: Prevents embedding in iframes
-        - **Content Security Policy (CSP)**: Restricts cross-origin requests
-        - **Clickjacking Protection**: Protects user interactions
-        - **Authentication Requirements**: May require logged-in sessions
-        
-        **Best Alternatives:**
-        1. Direct links (as shown above)
-        2. Official mobile apps
-        3. Browser extensions (if available)
-        4. Official API access (if provided)
-        """)
+        # Additional information
+        with st.expander("ℹ️ Why can't I embed Truth Social?"):
+            st.markdown("""
+            **Platform Security Restrictions:**
+            
+            Truth Social, like many modern social media platforms, implements:
+            
+            - **X-Frame-Options**: Prevents embedding in iframes
+            - **Content Security Policy (CSP)**: Restricts cross-origin requests
+            - **Clickjacking Protection**: Protects user interactions
+            - **Authentication Requirements**: May require logged-in sessions
+            
+            **Best Alternatives:**
+            1. Direct links (as shown above)
+            2. Official mobile apps
+            3. Browser extensions (if available)
+            4. Official API access (if provided)
+            """)
 
 
 
