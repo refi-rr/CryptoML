@@ -2,7 +2,7 @@
 Crypto Futures Scanner Pro - Ultimate Edition
 Enhanced with: Parallel Processing, Database, Alerts, Backtesting, Portfolio Tracking
 Author: AI Assistant
-Version: 2.0
+Version: 5.0
 """
 
 import streamlit as st
@@ -2983,33 +2983,10 @@ def main():
             
             # Market Heatmap
             with st.expander("🗺️ Market Heatmap", expanded=False):
-                try:
-                    heatmap = create_market_heatmap_safe(results)
-                    
-                    if heatmap:
-                        st.plotly_chart(heatmap, use_container_width=True)
-                    else:
-                        # Fallback 1: Grid view
-                        st.info("📊 Using grid view (heatmap unavailable)")
-                        grid_result = create_market_grid(results)
-                        
-                        if not grid_result:
-                            # Fallback 2: Simple table
-                            st.info("📋 Using table view")
-                            create_simple_signal_table(results)
-                
-                except Exception as e:
-                    st.error(f"⚠️ Visualization error: {e}")
-                    
-                    # Emergency fallback
-                    try:
-                        st.info("📊 Showing alternative view...")
-                        create_market_grid(results)
-                    except:
-                        st.info("📋 Showing simple table...")
-                        create_simple_signal_table(results)
-
-
+                heatmap = create_market_heatmap(results)
+                if heatmap:
+                    st.plotly_chart(heatmap, use_container_width=True)
+            
             # Export button
             col1, col2 = st.columns([1, 5])
             with col1:
@@ -3394,242 +3371,6 @@ def main():
         
         ⚠️ **Disclaimer:** For educational purposes only. Always DYOR and manage risk properly.
         """)
-    
-    # ==================== MARKET VISUALIZATION FUNCTIONS (SAFE) ====================
-
-def create_market_grid(results):
-    """
-    Simple grid view as fallback when heatmap fails
-    """
-    if not results or len(results) == 0:
-        st.info("No data available")
-        return None
-    
-    # Group by signal type
-    long_signals = [r for r in results if r.get('consensus') == 'LONG']
-    short_signals = [r for r in results if r.get('consensus') == 'SHORT']
-    neutral_signals = [r for r in results if r.get('consensus') == 'NEUTRAL']
-    
-    # Sort by strength
-    long_signals = sorted(long_signals, key=lambda x: x.get('strength', 0), reverse=True)
-    short_signals = sorted(short_signals, key=lambda x: x.get('strength', 0), reverse=True)
-    neutral_signals = sorted(neutral_signals, key=lambda x: x.get('strength', 0), reverse=True)
-    
-    # Display in columns
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("### 🟢 LONG Signals")
-        if long_signals:
-            for r in long_signals[:15]:
-                symbol = r.get('name', r.get('symbol', 'N/A'))
-                strength = r.get('strength', 0)
-                price = r.get('price', 0)
-                st.markdown(f"**{symbol}**: {strength:.1f}% | ${price:,.4f}")
-        else:
-            st.info("No long signals")
-    
-    with col2:
-        st.markdown("### 🔴 SHORT Signals")
-        if short_signals:
-            for r in short_signals[:15]:
-                symbol = r.get('name', r.get('symbol', 'N/A'))
-                strength = r.get('strength', 0)
-                price = r.get('price', 0)
-                st.markdown(f"**{symbol}**: {strength:.1f}% | ${price:,.4f}")
-        else:
-            st.info("No short signals")
-    
-    with col3:
-        st.markdown("### ⚪ NEUTRAL")
-        if neutral_signals:
-            for r in neutral_signals[:15]:
-                symbol = r.get('name', r.get('symbol', 'N/A'))
-                strength = r.get('strength', 0)
-                price = r.get('price', 0)
-                st.markdown(f"**{symbol}**: {strength:.1f}% | ${price:,.4f}")
-        else:
-            st.info("No neutral signals")
-    
-    return True
-
-
-def create_market_heatmap_safe(results):
-    """
-    Ultra-safe heatmap with multiple fallback visualizations
-    """
-    if not results or len(results) == 0:
-        st.info("No data available for heatmap")
-        return None
-    
-    # Prepare data with extensive validation
-    data = []
-    for r in results:
-        try:
-            tf_4h = r.get('timeframes', {}).get('4h', {})
-            indicators = tf_4h.get('indicators', {}) if isinstance(tf_4h, dict) else {}
-            
-            symbol = str(r.get('name') or r.get('symbol') or 'Unknown')
-            strength = float(r.get('strength', 0) or 0)
-            consensus = str(r.get('consensus', 'NEUTRAL'))
-            volume = float(indicators.get('volume_ratio', 1) or 1)
-            
-            # Only include valid entries
-            if strength > 0 and volume > 0 and symbol != 'Unknown':
-                data.append({
-                    'symbol': symbol,
-                    'strength': strength,
-                    'consensus': consensus,
-                    'volume': volume
-                })
-        except (TypeError, ValueError, KeyError) as e:
-            continue
-    
-    if len(data) == 0:
-        st.warning("⚠️ No valid data for heatmap (all strengths are zero or invalid)")
-        return None
-    
-    df = pd.DataFrame(data)
-    
-    # Data validation and cleaning
-    df['strength'] = pd.to_numeric(df['strength'], errors='coerce').fillna(0)
-    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(1)
-    
-    # Remove zero values
-    df = df[df['strength'] > 0].copy()
-    
-    if len(df) == 0:
-        st.warning("⚠️ All strength values are zero - cannot create heatmap")
-        return None
-    
-    # Ensure minimum values for visualization
-    df['strength'] = df['strength'].clip(lower=0.1)
-    df['volume'] = df['volume'].clip(lower=0.1)
-    
-    # Method 1: Try Treemap
-    try:
-        fig = px.treemap(
-            df,
-            path=['consensus', 'symbol'],
-            values='strength',
-            color='volume',
-            color_continuous_scale='RdYlGn',
-            title='Market Overview Heatmap',
-            hover_data={
-                'strength': ':.1f',
-                'volume': ':.2f'
-            }
-        )
-        fig.update_layout(
-            height=600,
-            margin=dict(t=50, l=25, r=25, b=25)
-        )
-        return fig
-    except Exception as e1:
-        st.warning(f"Treemap failed, trying alternative... ({str(e1)[:50]})")
-    
-    # Method 2: Try Sunburst
-    try:
-        fig = px.sunburst(
-            df,
-            path=['consensus', 'symbol'],
-            values='strength',
-            color='volume',
-            color_continuous_scale='RdYlGn',
-            title='Market Overview (Sunburst Chart)'
-        )
-        fig.update_layout(height=600)
-        return fig
-    except Exception as e2:
-        st.warning(f"Sunburst failed, using bar chart... ({str(e2)[:50]})")
-    
-    # Method 3: Fallback to Bar Chart
-    try:
-        df_sorted = df.sort_values('strength', ascending=False).head(30)
-        
-        fig = go.Figure()
-        
-        colors = {
-            'LONG': 'green',
-            'SHORT': 'red',
-            'NEUTRAL': 'gray'
-        }
-        
-        for signal in df_sorted['consensus'].unique():
-            df_signal = df_sorted[df_sorted['consensus'] == signal]
-            
-            fig.add_trace(go.Bar(
-                y=df_signal['symbol'],
-                x=df_signal['strength'],
-                name=signal,
-                orientation='h',
-                marker_color=colors.get(signal, 'blue'),
-                text=df_signal['strength'].round(1),
-                textposition='auto',
-                hovertemplate='<b>%{y}</b><br>Strength: %{x:.1f}%<extra></extra>'
-            ))
-        
-        fig.update_layout(
-            title='Market Overview - Top 30 by Strength',
-            xaxis_title='Strength %',
-            yaxis_title='Symbol',
-            height=max(400, len(df_sorted) * 20),  # Dynamic height
-            barmode='group',
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
-        )
-        
-        return fig
-    except Exception as e3:
-        st.error(f"❌ All visualization methods failed: {e3}")
-        return None
-
-
-def create_simple_signal_table(results):
-    """
-    Ultra-simple table view as last resort
-    """
-    if not results:
-        return None
-    
-    table_data = []
-    for r in results:
-        try:
-            table_data.append({
-                'Symbol': r.get('name', r.get('symbol', 'N/A')),
-                'Signal': r.get('consensus', 'N/A'),
-                'Strength': f"{r.get('strength', 0):.1f}%",
-                'Price': f"${r.get('price', 0):,.4f}"
-            })
-        except:
-            continue
-    
-    if table_data:
-        df = pd.DataFrame(table_data)
-        st.dataframe(
-            df.sort_values('Strength', ascending=False),
-            use_container_width=True,
-            hide_index=True
-        )
-        return True
-    
-    return None
-
-
-# ==================== REPLACE create_market_heatmap ====================
-
-def create_market_heatmap(results):
-    """
-    DEPRECATED: Use create_market_heatmap_safe instead
-    This wrapper ensures backward compatibility
-    """
-    return create_market_heatmap_safe(results)
 
     def main():
         tab1, tab2, tab3, tab4, tab5 = st.tabs(['Scanner', 'Portfolio', 'Performance', 'Settings', 'Single Analyzer'])
@@ -4896,123 +4637,44 @@ def create_market_heatmap_safe(results):
     import pandas as _pd
     import numpy as _np
     import plotly.express as _px
-    
-
-    
-    """
-    Ultra-safe version with multiple fallback visualizations
-    """
-    if not results:
-        return None
-    
-    # Prepare data with extensive validation
     data = []
     for r in results:
+        tf4 = r.get('timeframes', {}).get('4h', {})
+        indicators = tf4.get('indicators', {}) if isinstance(tf4, dict) else {}
+        data.append({
+            'symbol': r.get('name') or r.get('symbol') or 'Unknown',
+            'strength': r.get('strength', 0) or 0,
+            'consensus': r.get('consensus', 'NEUTRAL'),
+            'volume': indicators.get('volume_ratio', 1) or 1
+        })
+    df = _pd.DataFrame(data)
+    if df.empty:
+        return None
+    df['strength'] = _pd.to_numeric(df['strength'], errors='coerce').fillna(0)
+    df['volume'] = _pd.to_numeric(df['volume'], errors='coerce').fillna(1)
+    # avoid zeros that cause divide by zero in weighted average
+    if df['strength'].sum() == 0:
+        # fallback: use volume as proxy weights, but avoid zero
+        df['strength'] = df['volume'].clip(lower=1)
+    try:
+        fig = _px.treemap(
+            df,
+            path=['consensus','symbol'],
+            values='strength',
+            color='volume',
+            color_continuous_scale='RdYlGn',
+            title='Market Overview Heatmap (Safe Mode)'
+        )
+        fig.update_layout(margin=dict(t=50,l=25,r=25,b=25), height=600)
+        return fig
+    except Exception as e:
+        # fallback simple bar chart
         try:
-            tf_4h = r.get('timeframes', {}).get('4h', {})
-            indicators = tf_4h.get('indicators', {}) if isinstance(tf_4h, dict) else {}
-            
-            symbol = str(r.get('name') or r.get('symbol') or 'Unknown')
-            strength = float(r.get('strength', 0) or 0)
-            consensus = str(r.get('consensus', 'NEUTRAL'))
-            volume = float(indicators.get('volume_ratio', 1) or 1)
-            
-            # Only include valid entries
-            if strength > 0 and volume > 0 and symbol != 'Unknown':
-                data.append({
-                    'symbol': symbol,
-                    'strength': strength,
-                    'consensus': consensus,
-                    'volume': volume
-                })
-        except (TypeError, ValueError, KeyError) as e:
-            continue
-    
-    if len(data) == 0:
-        st.info("No valid data available for market heatmap")
-        return None
-    
-    df = pd.DataFrame(data)
-    
-    # Data validation
-    df['strength'] = pd.to_numeric(df['strength'], errors='coerce').fillna(0)
-    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(1)
-    
-    # Remove zero values
-    df = df[df['strength'] > 0].copy()
-    
-    if len(df) == 0:
-        st.warning("All strength values are zero - cannot create heatmap")
-        return None
-    
-    # Ensure minimum values for visualization
-    df['strength'] = df['strength'].clip(lower=0.1)
-    df['volume'] = df['volume'].clip(lower=0.1)
-    
-    # Try Method 1: Treemap
-    try:
-        fig = px.treemap(
-            df,
-            path=['consensus', 'symbol'],
-            values='strength',
-            color='volume',
-            color_continuous_scale='RdYlGn',
-            title='Market Overview Heatmap'
-        )
-        fig.update_layout(height=600)
-        return fig
-    except Exception as e1:
-        st.warning(f"Treemap failed: {str(e1)[:100]}. Trying alternative...")
-    
-    # Fallback Method 2: Sunburst
-    try:
-        fig = px.sunburst(
-            df,
-            path=['consensus', 'symbol'],
-            values='strength',
-            color='volume',
-            color_continuous_scale='RdYlGn',
-            title='Market Overview (Sunburst)'
-        )
-        fig.update_layout(height=600)
-        return fig
-    except Exception as e2:
-        st.warning(f"Sunburst failed: {str(e2)[:100]}. Using bar chart...")
-    
-    # Fallback Method 3: Horizontal Bar Chart
-    try:
-        df_sorted = df.sort_values('strength', ascending=False).head(30)
-        
-        fig = go.Figure()
-        
-        for signal in df_sorted['consensus'].unique():
-            df_signal = df_sorted[df_sorted['consensus'] == signal]
-            
-            color = 'green' if signal == 'LONG' else 'red' if signal == 'SHORT' else 'gray'
-            
-            fig.add_trace(go.Bar(
-                y=df_signal['symbol'],
-                x=df_signal['strength'],
-                name=signal,
-                orientation='h',
-                marker_color=color,
-                text=df_signal['strength'].round(1),
-                textposition='auto'
-            ))
-        
-        fig.update_layout(
-            title='Market Overview (Top 30 by Strength)',
-            xaxis_title='Strength %',
-            yaxis_title='Symbol',
-            height=800,
-            barmode='group',
-            showlegend=True
-        )
-        
-        return fig
-    except Exception as e3:
-        st.error(f"All visualization methods failed: {e3}")
-        return None
+            fig = _px.bar(df.sort_values('strength', ascending=False).head(30), x='symbol', y='strength', color='consensus', title='Market Overview (Fallback)')
+            fig.update_layout(height=400)
+            return fig
+        except:
+            return None
 
     
 def plot_funding_chart(funding_raw, symbol):
