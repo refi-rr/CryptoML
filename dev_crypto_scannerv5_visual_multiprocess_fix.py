@@ -30,6 +30,10 @@ from datetime import datetime
 import pytz
 import json
 import warnings
+from arkm_scraper import fetch_arkm_wintermute_section
+from tradingview_ta import TA_Handler, Interval
+from global_market_dashboard import render_global_market_dashboard
+
 warnings.filterwarnings('ignore')
 
 # === Multiprocessing Safety Guard ===
@@ -329,6 +333,100 @@ class RateLimiter:
 rate_limiter = RateLimiter(max_calls=15, period=40)
 
 # ==================== DATA FETCHING ====================
+
+
+
+COINS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "HYPE": "hyperliquid"  # pastikan ID ini sesuai di CoinGecko (lihat catatan bawah)
+}
+
+@st.cache_data(ttl=300)
+def get_coin_data(coin_id):
+    """
+    Ambil data coin spesifik dari CoinGecko (harga, market cap, dominasi, perubahan 24 jam).
+    """
+    try:
+        # Fetch global data (for total market cap)
+        resp_global = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+        total_market_cap = resp_global.json()["data"]["total_market_cap"]["usd"]
+
+        # Fetch coin data
+        resp_coin = requests.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "ids": coin_id},
+            timeout=10
+        )
+        data = resp_coin.json()
+        if not data:
+            st.warning(f"⚠️ No data found for {coin_id}")
+            return None
+
+        c = data[0]
+        market_cap = c.get("market_cap", 0)
+        dominance = (market_cap / total_market_cap) * 100 if total_market_cap > 0 else 0
+        return {
+            "id": coin_id,
+            "symbol": c.get("symbol", "").upper(),
+            "name": c.get("name"),
+            "price": c.get("current_price"),
+            "market_cap": market_cap,
+            "dominance": dominance,
+            "change_24h": c.get("price_change_percentage_24h", 0),
+            "rank": c.get("market_cap_rank")
+        }
+
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch {coin_id} data: {e}")
+        return None
+
+
+def display_coin_summary(coin_name):
+    """Tampilkan informasi coin di UI Streamlit"""
+    data = get_coin_data(coin_name)
+    if not data:
+        st.info(f"No data available for {coin_name}")
+        return
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("💰 Price (USD)", f"${data['price']:,.2f}")
+    with col2:
+        st.metric("🏆 Rank", data['rank'])
+    with col3:
+        st.metric("📊 Market Cap", f"${data['market_cap']:,.0f}")
+    with col4:
+        st.metric("🌍 Dominance", f"{data['dominance']:.2f}%")
+
+    st.caption(f"24h Change: {data['change_24h']:.2f}% | Source: CoinGecko")
+
+
+@st.cache_data(ttl=300)
+def get_total3():
+    """Fetch Total3 (total market cap excluding BTC & ETH) using CoinGecko."""
+    try:
+        resp_global = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+        total_market_cap = resp_global.json()["data"]["total_market_cap"]["usd"]
+
+        resp_markets = requests.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "ids": "bitcoin,ethereum"},
+            timeout=10
+        )
+        market_data = resp_markets.json()
+        btc_cap = next((c["market_cap"] for c in market_data if c["id"] == "bitcoin"), 0)
+        eth_cap = next((c["market_cap"] for c in market_data if c["id"] == "ethereum"), 0)
+
+        total3 = total_market_cap - btc_cap - eth_cap
+        return total3
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch TOTAL3 data: {e}")
+        return None
+
+
+
 @st.cache_data(ttl=200)
 def get_binance_top_symbols(limit=40):
     """Fetch top trading pairs from Binance Futures"""
@@ -2748,6 +2846,31 @@ def create_orderbook_chart(bids, asks, whale_bids, whale_asks):
     )
     
     return fig
+
+def get_tv_data(symbol: str, interval=Interval.INTERVAL_1_DAY, bars=90):
+    """Fetch OHLC data from TradingView (unofficial)"""
+    try:
+        handler = TA_Handler(
+            symbol=symbol,
+            exchange="CRYPTOCAP",
+            screener="crypto",
+            interval=interval
+        )
+        analysis = handler.get_analysis()
+        candles = analysis.indicators.get("ohlc", [])
+        # tradingview_ta tidak expose full ohlc — jadi kita fallback ke coin API
+        return None
+    except Exception as e:
+        st.warning(f"⚠️ TradingView fetch failed: {e}")
+        return None
+
+def get_fear_greed_index():
+    url = "https://api.alternative.me/fng/"
+    r = requests.get(url).json()
+    value = r["data"][0]["value"]
+    classification = r["data"][0]["value_classification"]
+    return int(value), classification
+
 # ===== Enhanced Futures Analysis integrated =====
 
 def main():
@@ -2846,6 +2969,20 @@ def main():
                     st.info("📈 MARKET OPEN - One session active")
                 else:
                     st.warning("💤 MARKETS CLOSED - No active sessions")
+
+                #BTCD prices
+                
+                st.markdown("---")
+                st.markdown("### 📊 Market Overview")
+                value, cls = get_fear_greed_index()
+                st.metric("😨 Fear & Greed Index", f"{value} ({cls})")
+                st.caption("Live data from CoinGecko (auto-updated every 5 minutes).")
+                
+                for symbol, coin_id in COINS.items():
+                    with st.container():
+                        st.markdown(f"#### {symbol}")
+                        display_coin_summary(coin_id)
+                        st.markdown("---")
 
         # Gunakan yang simple
         simple_trading_sessions()
@@ -2982,10 +3119,10 @@ def main():
             st.markdown(f"### 📊 Found {len(results)} Trading Opportunities")
             
             # Market Heatmap
-            with st.expander("🗺️ Market Heatmap", expanded=False):
-                heatmap = create_market_heatmap(results)
-                if heatmap:
-                    st.plotly_chart(heatmap, use_container_width=True)
+            #with st.expander("🗺️ Market Heatmap", expanded=False):
+            #    heatmap = create_market_heatmap(results)
+            #    if heatmap:
+            #        st.plotly_chart(heatmap, use_container_width=True)
             
             # Export button
             col1, col2 = st.columns([1, 5])
@@ -4446,6 +4583,8 @@ def main():
             """)
 
     with tab7:
+
+               
         st.header("📅 Important News Sentiment - Investing.com")
         
         # HTML code untuk economic calendar
@@ -4510,111 +4649,98 @@ def main():
     
         st.components.v1.html(financial_juice_html, height=800)
 
-        st.header("🗽 Truth Social - @realDonaldTrump")
+               
         
-        js_code = """
-        <script>
-        function openTruthSocial() {
-            window.open('https://truthsocial.com/@realDonaldTrump', '_blank', 
-                    'width=1200,height=800,scrollbars=yes');
-            return false;
-        }
-        
-        function copyToClipboard() {
-            navigator.clipboard.writeText('https://truthsocial.com/@realDonaldTrump');
-            alert('Profi'Profilek copied to clipboard!');
-        }
-        </script>
-        
-        <style>
-        .truth-card {
-            background: white;
-            border-radius: 15px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            text-align: center;
-            margin: 20px 0;
-        }
-        .truth-btn {
-            background: linear-gradient(45deg, #FF6B6B, #FF8E53);
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 25px;
-            font-size: 18px;
-            cursor: pointer;
-            margin: 10px;
-            transition: all 0.3s ease;
-        }
-        .truth-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(255,107,107,0.4);
-        }
-        .profile-stats {
-            display: flex;
-            justify-content: space-around;
-            margin: 20px 0;
-        }
-        .stat-item {
-            text-align: center;
-        }
-        </style>
-        
-        <div class="truth-card">
-            <h2>Donald J. Trump</h2>
-            <p style="color: #666; margin-bottom: 30px;">@realDonaldTrump on Truth Social</p>
-            
-            <div class="profile-stats">
-                <div class="stat-item">
-                    <h3>5.2M+</h3>
-                    <p>Followers</p>
-                </div>
-                <div class="stat-item">
-                    <h3>3.4K+</h3>
-                    <p>Posts</p>
-                </div>
-                <div class="stat-item">
-                    <h3>2022</h3>
-                    <p>Joined</p>
-                </div>
-            </div>
-            
-            <button class="truth-btn" onclick="openTruthSocial()">
-                🗽 Open Truth Social Profile
-            </button>
-            
-            <button class="truth-btn" onclick="copyToClipboard()" 
-                    style="background: linear-gradient(45deg, #667eea, #764ba2);">
-                📋 Copy Profile Link
-            </button>
-            
-            <div style="margin-top: 20px; color: #888;">
-                <small>Truth Social doesn't allow direct embedding for security reasons</small>
-            </div>
-        </div>
-        """
-        
-        components.html(js_code, height=800)
-        
-        # Additional information
-        with st.expander("ℹ️ Why can't I embed Truth Social?"):
-            st.markdown("""
-            **Platform Security Restrictions:**
-            
-            Truth Social, like many modern social media platforms, implements:
-            
-            - **X-Frame-Options**: Prevents embedding in iframes
-            - **Content Security Policy (CSP)**: Restricts cross-origin requests
-            - **Clickjacking Protection**: Protects user interactions
-            - **Authentication Requirements**: May require logged-in sessions
-            
-            **Best Alternatives:**
-            1. Direct links (as shown above)
-            2. Official mobile apps
-            3. Browser extensions (if available)
-            4. Official API access (if provided)
-            """)
+        #with st.spinner("Fetching live data from ARKM Intel..."):
+        #    html_snippet = fetch_arkm_wintermute_section()
 
+        #st.components.v1.html(html_snippet, height=1000, scrolling=True)
+        
+        # Referal Important Link
+        st.markdown("## 🌐 Important Crypto Intelligence Links")
+        st.caption("Kumpulan tautan penting untuk analisis market, intel blockchain, dan on-chain monitoring.")
+
+        # Gunakan HTML custom agar tampil lebih cantik
+        html_block = """
+        <style>
+            .link-card {
+                border: 1px solid #3a3a3a;
+                border-radius: 10px;
+                padding: 16px;
+                margin-bottom: 16px;
+                background-color: #111111;
+                box-shadow: 0px 0px 10px rgba(255,255,255,0.05);
+            }
+            .link-card:hover {
+                box-shadow: 0px 0px 15px rgba(0,255,255,0.2);
+            }
+            .link-title {
+                font-size: 18px;
+                font-weight: bold;
+                color: #00ffff;
+            }
+            .link-desc {
+                color: #ccc;
+                margin-top: 6px;
+                margin-bottom: 10px;
+            }
+            .link-btn {
+                text-decoration: none;
+                color: white;
+                background-color: #0066ff;
+                padding: 6px 12px;
+                border-radius: 6px;
+                transition: 0.2s;
+            }
+            .link-btn:hover {
+                background-color: #0099ff;
+            }
+        </style>
+
+        <div class="link-card">
+            <div class="link-title">🧠 Arkham Intel — Wintermute</div>
+            <div class="link-desc">
+                Analisis intel blockchain untuk entitas besar seperti <b>Wintermute</b>, termasuk transaksi, aset, dan aktivitas wallet.
+            </div>
+            <a href="https://intel.arkm.com/explorer/entity/wintermute" target="_blank" class="link-btn">🌐 Buka Arkham Intel Wintermute</a>
+        </div>
+
+        <div class="link-card">
+            <div class="link-title">📊 Dexscreener</div>
+            <div class="link-desc">
+                Pemantauan real-time pair trading di berbagai <b>DEX</b> seperti Uniswap, PancakeSwap, dan lain-lain.
+            </div>
+            <a href="https://dexscreener.com/" target="_blank" class="link-btn">📈 Buka Dexscreener</a>
+        </div>
+
+        <div class="link-card">
+            <div class="link-title">🔍 Arkham Global Intelligence</div>
+            <div class="link-desc">
+                Jelajahi database intel Arkham untuk <b>wallet, organisasi, dan entitas on-chain</b> lainnya.
+            </div>
+            <a href="https://intel.arkm.com/explorer/entity/wintermute" target="_blank" class="link-btn">🔗 Buka Arkham Explorer</a>
+        </div>
+
+        <div class="link-card">
+            <div class="link-title">🔍 Donald Trump Social</div>
+            <div class="link-desc">
+                Mau Tau Trump Ngomong Apa? Cek disini.
+            </div>
+            <a href="https://truthsocial.com/@realDonaldTrump" target="_blank" class="link-btn">🔗 Buka Social nya si Trump</a>
+        </div>
+
+        <div class="link-card">
+            <div class="link-title">🔍 Baron Trump (Katanya) </div>
+            <div class="link-desc">
+                Infonya sih si Baron Trump, Anak nya Donald Trump. Insider dong ?.
+            </div>
+            <a href="https://hyperdash.info/trader/0xc2a30212a8ddac9e123944d6e29faddce994e5f2 " target="_blank" class="link-btn">🔗 Buka Hyperdash nya Baron</a>
+        </div>
+       
+        """
+
+
+        st.components.v1.html(html_block, height=800, scrolling=True)
 
 
     # Footer
